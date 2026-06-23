@@ -1,105 +1,91 @@
 # DEPLOY.md — Freya on EC2
 
-One-page production runbook. The stack uses a single `docker-compose.yml` that
-boots identically on a laptop and on EC2.
+One-page deployment runbook for the Freya interruptible voice agent.
 
-## Target
+## EC2 target
 
-| Field          | Value                                                  |
-| -------------- | ------------------------------------------------------ |
-| AWS Region     | `us-east-1`                                            |
-| AMI            | Ubuntu Server 22.04 LTS (x86_64)                       |
-| Instance Type  | `t3.medium`                                            |
-| Disk           | 16 GB gp3                                              |
-| SSH user       | `ubuntu`                                               |
-| Public host    | Cloudflare Tunnel — record the issued `*.trycloudflare.com` URL or your custom tunnel hostname in the submission. |
+| Field | Value |
+| --- | --- |
+| Region | `us-east-1` |
+| AMI | Ubuntu Server 24.04 LTS (x86_64) |
+| Instance type | `t3.medium` |
+| Disk | 16 GB gp3 |
+| SSH user | `ubuntu` |
+| Public URL | `https://acquire-synthetic-manager-rent.trycloudflare.com/` |
 
-## Security group (inbound)
+## Security group
 
-| Port | Why                           |
-| ---- | ----------------------------- |
-| 22   | SSH for the grader / operator |
+Only SSH is open inbound:
 
-**Only port 22.** The frontend and backend are **not** exposed to the public
-internet directly. Cloudflare Tunnel runs as an outbound process on the box and
-publishes the frontend (`localhost:3000`) over HTTPS. Outbound is the default
-allow on AWS, so no extra rules are needed.
+| Port | Source | Purpose |
+| --- | --- | --- |
+| `22/tcp` | Grader/operator IP range | SSH administration |
 
-Mic access in the browser requires a secure context — always test through the
-Cloudflare Tunnel HTTPS URL, never the raw EC2 IP.
+Ports `3000` and `8000` are not opened publicly. Cloudflare Tunnel runs as an
+outbound process on the EC2 host and exposes the frontend over HTTPS. This keeps
+the backend private and still gives browsers a secure origin for microphone
+access.
 
-## Compose architecture
+## Docker Compose wiring
 
-```
-            ┌──────────────────────────────────────────────────┐
-            │ EC2 host                                         │
-            │                                                  │
-   (HTTPS)  │   cloudflared ──► 127.0.0.1:3000                │
-   ───────► │                       │                          │
-            │                       ▼                          │
-            │   ┌──────────────┐ /api/* ┌───────────────────┐ │
-            │   │  frontend    │───────►│  backend          │ │
-            │   │  Next.js 14  │  http  │  FastAPI + Pipecat│ │
-            │   │  prod mode   │        │  (port 8000)      │ │
-            │   │  port 3000   │        │  unpublished      │ │
-            │   └──────────────┘        └───────────────────┘ │
-            │      docker network: "freya"                    │
-            └──────────────────────────────────────────────────┘
-```
+The deployment uses the single repository `docker-compose.yml`.
 
-- Frontend uses Next.js rewrites to forward `/api/*` to the backend on the
-  internal docker network, so the browser only ever talks to one origin.
-- `restart: unless-stopped` on every service — the stack returns after
-  `sudo reboot`.
+- `frontend`: Next.js production server on host port `3000`.
+- `backend`: FastAPI/Pipecat service on internal port `8000`, not published.
+- `qdrant`: internal vector store on the Docker network.
+- The frontend proxies `/api/*` to `http://backend:8000` using the Compose
+  network, so browser traffic only needs the frontend origin.
+- Cloudflare Tunnel forwards public HTTPS traffic to `http://localhost:3000`.
+- All services use `restart: unless-stopped` so Docker restarts them after reboot.
 
-## Environment
-
-The PDF's clean-box command assumes secrets have already been provisioned. Vendor
-credentials cannot safely live in Git, so a brand-new EC2 host needs this one-time
-secret step:
-
-1. SSH into the box.
-2. `git clone <repo> && cd <repo>`
-3. `cp .env.example .env`
-4. Fill in API keys in `.env` (see [`.env.example`](./.env.example) for the full list).
-5. `docker compose up -d --build`
-6. Verify: `curl http://localhost:3000/api/health` returns `{"status":"ok",...}`.
-7. Start the Cloudflare Tunnel pointing at `http://localhost:3000`.
-
-The production `.env` lives **only** on the EC2 box. It is never committed.
-Once it exists, a fresh clone can boot with:
+Initial boot after secrets are provisioned:
 
 ```bash
-docker compose up -d
+git clone <repo>
+cd voice_agent
+cp .env.example .env
+$EDITOR .env
+docker compose up -d --build
 ```
 
-No Compose override, source edit, package installation, or manual worker startup is
-required.
-
-After pulling code changes, rebuild and recreate the app containers so the host
-cannot serve a stale Next.js bundle:
+After pulling code changes:
 
 ```bash
 git pull
 docker compose up -d --build --force-recreate backend frontend
 ```
 
-## Logs
+## Logs and health checks
+
+Application logs go to container stdout/stderr and are available through Docker:
 
 ```bash
 docker compose logs -f backend
 docker compose logs -f frontend
-docker compose ps          # health status
+docker compose logs -f qdrant
+docker compose ps
 ```
 
-JSON-structured logs land on stdout and are captured by Docker's local driver.
-For longer retention, ship to CloudWatch or attach a log-rotation policy on the
-Docker daemon (`/etc/docker/daemon.json` → `log-opts.max-size`).
+Health check:
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+Expected result includes `"status":"ok"`.
 
 ## Restart after reboot
 
-`restart: unless-stopped` brings the containers back automatically when the
-Docker daemon comes up after boot. To force a manual restart:
+Docker brings the Compose services back automatically because each service uses
+`restart: unless-stopped`. To verify after reboot:
+
+```bash
+cd ~/voice_agent
+docker compose ps
+curl http://localhost:3000/api/health
+```
+
+If a manual restart is needed:
 
 ```bash
 cd ~/voice_agent
@@ -107,66 +93,14 @@ docker compose down
 docker compose up -d
 ```
 
-To rebuild after pulling code changes:
+For the temporary Cloudflare URL, keep `cloudflared` running in `tmux`:
 
 ```bash
-cd ~/voice_agent     # adjust if the repo was cloned under a different name
-git pull
-docker compose up -d --build --force-recreate backend frontend
-```
-
-## Cloudflare Tunnel (HTTPS exposure)
-
-Quick (ephemeral) tunnel — fine for the take-home review window if the process
-keeps running:
-
-```bash
-command -v cloudflared   # install cloudflared first if this prints nothing
-cloudflared tunnel --url http://localhost:3000
-```
-
-`cloudflared` prints the assigned `*.trycloudflare.com` URL on stdout. This URL
-is temporary and tied to that running process. To survive an SSH disconnect,
-run it inside `tmux`:
-
-```bash
+tmux attach -t freya
+# or create it:
 tmux new -s freya
 cloudflared tunnel --url http://localhost:3000
-# detach with: Ctrl+b, then d
-tmux attach -t freya   # later, to inspect it
 ```
 
-If you prefer a host-level service, use systemd. Note that with a quick
-`trycloudflare.com` tunnel, the URL may change if the service restarts; for a
-stable long-lived URL, use a named Cloudflare Tunnel with your own hostname.
-If `command -v cloudflared` prints a path other than `/usr/local/bin/cloudflared`,
-use that path in `ExecStart`.
-
-```bash
-sudo tee /etc/systemd/system/freya-tunnel.service >/dev/null <<'UNIT'
-[Unit]
-Description=Cloudflare Tunnel for Freya
-After=network-online.target docker.service
-Wants=network-online.target
-
-[Service]
-ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:3000 --no-autoupdate
-Restart=on-failure
-User=ubuntu
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-sudo systemctl daemon-reload
-sudo systemctl enable --now freya-tunnel
-journalctl -u freya-tunnel -f      # grab the published URL from the logs
-```
-
-## Troubleshooting
-
-- **Mic doesn't activate in the browser** — you are on `http://`. Use the HTTPS
-  tunnel URL.
-- **`/api/health` 502s** — backend container is unhealthy. Check `docker compose logs backend`; usually a missing required env var on first boot.
-- **Stack didn't survive reboot** — verify `restart: unless-stopped` is on every
-  service in `docker-compose.yml` and that the Docker daemon is enabled
-  (`systemctl is-enabled docker`).
+Detach with `Ctrl+b`, then `d`. The `trycloudflare.com` URL remains reachable
+only while that tunnel process stays alive.
