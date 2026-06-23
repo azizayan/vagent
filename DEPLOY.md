@@ -4,21 +4,21 @@ One-page deployment runbook for the Freya interruptible voice agent.
 
 ## EC2 target
 
-| Field | Value |
-| --- | --- |
-| Region | `us-east-1` |
-| AMI | Ubuntu Server 24.04 LTS (x86_64) |
-| Instance type | `t3.medium` |
-| Disk | 16 GB gp3 |
-| SSH user | `ubuntu` |
-| Public URL | `https://acquire-synthetic-manager-rent.trycloudflare.com/` |
+| Field         | Value                                                         |
+| ------------- | ------------------------------------------------------------- |
+| Region        | `us-east-1`                                                 |
+| AMI           | Ubuntu Server 24.04 LTS (x86_64)                              |
+| Instance type | `t3.medium`                                                 |
+| Disk          | 16 GB gp3                                                     |
+| SSH user      | `ubuntu`                                                    |
+| Public URL    | `https://acquire-synthetic-manager-rent.trycloudflare.com/` |
 
 ## Security group
 
 Only SSH is open inbound:
 
-| Port | Source | Purpose |
-| --- | --- | --- |
+| Port       | Source                   | Purpose            |
+| ---------- | ------------------------ | ------------------ |
 | `22/tcp` | Grader/operator IP range | SSH administration |
 
 Ports `3000` and `8000` are not opened publicly. Cloudflare Tunnel runs as an
@@ -42,7 +42,7 @@ Initial boot after secrets are provisioned:
 
 ```bash
 git clone <repo>
-cd voice_agent
+cd vagent
 cp .env.example .env
 $EDITOR .env
 docker compose up -d --build
@@ -80,7 +80,7 @@ Docker brings the Compose services back automatically because each service uses
 `restart: unless-stopped`. To verify after reboot:
 
 ```bash
-cd ~/voice_agent
+cd ~/vagent
 docker compose ps
 curl http://localhost:3000/api/health
 ```
@@ -88,7 +88,7 @@ curl http://localhost:3000/api/health
 If a manual restart is needed:
 
 ```bash
-cd ~/voice_agent
+cd ~/vagent
 docker compose down
 docker compose up -d
 ```
