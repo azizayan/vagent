@@ -12,13 +12,13 @@ boots identically on a laptop and on EC2.
 | Instance Type  | `t3.medium`                                            |
 | Disk           | 16 GB gp3                                              |
 | SSH user       | `ubuntu`                                               |
-| Public host    | Cloudflare Tunnel — set after `cloudflared` provisions a hostname for `localhost:3000`. Record the issued `*.trycloudflare.com` URL (or your custom tunnel hostname) in the submission. |
+| Public host    | Cloudflare Tunnel — record the issued `*.trycloudflare.com` URL or your custom tunnel hostname in the submission. |
 
 ## Security group (inbound)
 
-| Port | Why                                                                |
-| ---- | ------------------------------------------------------------------ |
-| 22   | SSH for the grader / operator                                      |
+| Port | Why                           |
+| ---- | ----------------------------- |
+| 22   | SSH for the grader / operator |
 
 **Only port 22.** The frontend and backend are **not** exposed to the public
 internet directly. Cloudflare Tunnel runs as an outbound process on the box and
@@ -49,7 +49,7 @@ Cloudflare Tunnel HTTPS URL, never the raw EC2 IP.
 
 - Frontend uses Next.js rewrites to forward `/api/*` to the backend on the
   internal docker network, so the browser only ever talks to one origin.
-- `restart: unless-stopped` on both services — the stack returns after
+- `restart: unless-stopped` on every service — the stack returns after
   `sudo reboot`.
 
 ## Environment
@@ -67,14 +67,22 @@ secret step:
 7. Start the Cloudflare Tunnel pointing at `http://localhost:3000`.
 
 The production `.env` lives **only** on the EC2 box. It is never committed.
-Once it exists, the requested operational command is exactly:
+Once it exists, a fresh clone can boot with:
 
 ```bash
-git pull && docker compose up -d
+docker compose up -d
 ```
 
 No Compose override, source edit, package installation, or manual worker startup is
 required.
+
+After pulling code changes, rebuild and recreate the app containers so the host
+cannot serve a stale Next.js bundle:
+
+```bash
+git pull
+docker compose up -d --build --force-recreate backend frontend
+```
 
 ## Logs
 
@@ -104,20 +112,35 @@ To rebuild after pulling code changes:
 ```bash
 cd ~/voice_agent     # adjust if the repo was cloned under a different name
 git pull
-docker compose up -d --build
+docker compose up -d --build --force-recreate backend frontend
 ```
 
 ## Cloudflare Tunnel (HTTPS exposure)
 
-Quick (ephemeral) tunnel — fine for the take-home review window:
+Quick (ephemeral) tunnel — fine for the take-home review window if the process
+keeps running:
 
 ```bash
-sudo apt-get install -y cloudflared
+command -v cloudflared   # install cloudflared first if this prints nothing
 cloudflared tunnel --url http://localhost:3000
 ```
 
-`cloudflared` prints the assigned `*.trycloudflare.com` URL on stdout. Keep
-the process alive with `tmux` / `systemd` so the URL stays reachable for ≥48h:
+`cloudflared` prints the assigned `*.trycloudflare.com` URL on stdout. This URL
+is temporary and tied to that running process. To survive an SSH disconnect,
+run it inside `tmux`:
+
+```bash
+tmux new -s freya
+cloudflared tunnel --url http://localhost:3000
+# detach with: Ctrl+b, then d
+tmux attach -t freya   # later, to inspect it
+```
+
+If you prefer a host-level service, use systemd. Note that with a quick
+`trycloudflare.com` tunnel, the URL may change if the service restarts; for a
+stable long-lived URL, use a named Cloudflare Tunnel with your own hostname.
+If `command -v cloudflared` prints a path other than `/usr/local/bin/cloudflared`,
+use that path in `ExecStart`.
 
 ```bash
 sudo tee /etc/systemd/system/freya-tunnel.service >/dev/null <<'UNIT'
