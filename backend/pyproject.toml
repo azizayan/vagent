@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.4,<3",
     "structlog>=24.1,<25",
     "httpx>=0.27,<1",
+    "tenacity>=9,<10",
     "pipecat-ai[daily,deepgram,cartesia,silero]==1.0.0",
 ]
 

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
-from contextlib import suppress
 from typing import Any
 
-import aiohttp
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import LLMRunFrame
@@ -17,23 +14,22 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.services.cartesia.tts import CartesiaTTSService
+from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
-from pipecat.transports.daily.utils import DailyRESTHelper, DailyRoomParams
+from structlog.contextvars import bind_contextvars, clear_contextvars
 
-from app.core.logging import configure_logging, get_logger
+from app.core.logging import get_logger
 from app.core.settings import Settings, get_settings
+from app.pipeline.processors.output_guard import LLMOutputGuard
+from app.pipeline.vad import map_interruptibility
+from app.schemas.config import SessionConfig
 
-ROOM_NAME = "freya-ch1"
 BOT_NAME = "Freya"
-SYSTEM_PROMPT = "You are a terse, slightly grumpy pirate. Keep replies under two sentences."
-GREETING_INSTRUCTION = "Greet the participant now in character."
-OPENAI_MODEL = "gpt-4o-mini"
-OPENAI_TEMPERATURE = 0.7
-OPENAI_MAX_TOKENS = 120
-CARTESIA_VOICE_ID = "71a7ad14-091c-4e8e-a314-022ece01c121"
+GREETING_INSTRUCTION = (
+    "Greet the participant in one short sentence under 20 words. Use plain text only."
+)
 
 logger = get_logger(__name__)
 
@@ -43,36 +39,17 @@ def _secret(settings: Settings, name: str) -> str:
     return value.get_secret_value() if hasattr(value, "get_secret_value") else str(value)
 
 
-def _room_url(settings: Settings) -> str:
-    domain = str(settings.require("DAILY_DOMAIN")).strip()
-    domain = domain.removeprefix("https://").removeprefix("http://").rstrip("/")
-    if not domain.endswith(".daily.co"):
-        domain = f"{domain}.daily.co"
-    return f"https://{domain}/{ROOM_NAME}"
-
-
-async def _create_room_and_token(settings: Settings) -> tuple[str, str]:
-    expected_url = _room_url(settings)
-    async with aiohttp.ClientSession() as session:
-        helper = DailyRESTHelper(
-            daily_api_key=_secret(settings, "DAILY_API_KEY"),
-            daily_api_url="https://api.daily.co/v1",
-            aiohttp_session=session,
-        )
-        try:
-            room = await helper.get_room_from_url(expected_url)
-        except Exception:
-            room = await helper.create_room(DailyRoomParams(name=ROOM_NAME, privacy="public"))
-
-        token = await helper.get_token(room.url, owner=True)
-        return room.url, token
-
-
-async def run_bot(settings: Settings | None = None) -> None:
+async def run_bot(
+    *,
+    room_url: str,
+    token: str,
+    config: SessionConfig,
+    session_id: str,
+    settings: Settings | None = None,
+) -> None:
     settings = settings or get_settings()
-    room_url, token = await _create_room_and_token(settings)
-
-    logger.info("bot.room_ready", room_url=room_url)
+    bind_contextvars(session_id=session_id)
+    logger.info("bot.starting", room_url=room_url)
 
     transport = DailyTransport(
         room_url,
@@ -83,27 +60,33 @@ async def run_bot(settings: Settings | None = None) -> None:
             audio_out_enabled=True,
         ),
     )
-    stt = DeepgramSTTService(api_key=_secret(settings, "DEEPGRAM_API_KEY"))
+    stt = DeepgramSTTService(
+        api_key=_secret(settings, "DEEPGRAM_API_KEY"),
+    )
     llm = OpenAILLMService(
         api_key=_secret(settings, "OPENAI_API_KEY"),
-        model=OPENAI_MODEL,
-        params=OpenAILLMService.InputParams(
-            temperature=OPENAI_TEMPERATURE,
-            max_tokens=OPENAI_MAX_TOKENS,
+        settings=OpenAILLMService.Settings(
+            model=settings.OPENAI_MODEL,
+            system_instruction=config.system_prompt,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
         ),
     )
     tts = CartesiaTTSService(
         api_key=_secret(settings, "CARTESIA_API_KEY"),
         settings=CartesiaTTSService.Settings(
-            voice=CARTESIA_VOICE_ID,
+            voice=config.tts_voice_id,
+            generation_config=GenerationConfig(speed=config.tts_speed),
         ),
     )
 
-    context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
+    context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(params=VADParams()),
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(**map_interruptibility(config.interruptibility_pct))
+            ),
         ),
     )
 
@@ -113,6 +96,7 @@ async def run_bot(settings: Settings | None = None) -> None:
             stt,
             user_aggregator,
             llm,
+            LLMOutputGuard(),
             tts,
             transport.output(),
             assistant_aggregator,
@@ -132,15 +116,7 @@ async def run_bot(settings: Settings | None = None) -> None:
         await task.queue_frames([LLMRunFrame()])
 
     runner = PipelineRunner()
-    await runner.run(task)
-
-
-async def _main() -> None:
-    settings = get_settings()
-    configure_logging(settings.LOG_LEVEL)
-    await run_bot(settings)
-
-
-if __name__ == "__main__":
-    with suppress(KeyboardInterrupt):
-        asyncio.run(_main())
+    try:
+        await runner.run(task)
+    finally:
+        clear_contextvars()

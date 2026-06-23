@@ -17,8 +17,6 @@ WORKDIR /app
 # Compose passes this through `build.args`.
 ARG NEXT_PUBLIC_API_URL=/api
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-ARG NEXT_PUBLIC_DAILY_ROOM_URL=
-ENV NEXT_PUBLIC_DAILY_ROOM_URL=$NEXT_PUBLIC_DAILY_ROOM_URL
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

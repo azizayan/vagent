@@ -47,7 +47,6 @@ services:
         # all browser traffic on the frontend origin (same-origin via Next.js
         # rewrites). Override only if the backend is tunneled separately.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
-        NEXT_PUBLIC_DAILY_ROOM_URL: ${NEXT_PUBLIC_DAILY_ROOM_URL:-}
     image: freya-frontend:local
     restart: unless-stopped
     environment:

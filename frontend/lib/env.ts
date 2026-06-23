@@ -18,5 +18,4 @@ const readApiBaseUrl = (): string => {
 
 export const env = {
   apiBaseUrl: readApiBaseUrl(),
-  dailyRoomUrl: process.env.NEXT_PUBLIC_DAILY_ROOM_URL?.trim() ?? "",
 } as const;

@@ -25,7 +25,14 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const body: unknown = text ? JSON.parse(text) : null;
 
   if (!res.ok) {
-    throw new ApiError(res.status, body, `Request to ${path} failed: ${res.status}`);
+    const message =
+      typeof body === "object" &&
+      body !== null &&
+      "message" in body &&
+      typeof body.message === "string"
+        ? body.message
+        : `Request to ${path} failed: ${res.status}`;
+    throw new ApiError(res.status, body, message);
   }
 
   return body as T;

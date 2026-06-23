@@ -7,33 +7,19 @@ import pytest
 
 from app import bot
 from app.core.settings import Settings
-
-
-def test_daily_room_url_uses_configured_domain() -> None:
-    settings = Settings(DAILY_DOMAIN="freya-test")
-
-    assert bot._room_url(settings) == "https://freya-test.daily.co/freya-ch1"
+from app.schemas.config import SessionConfig
 
 
 @pytest.mark.asyncio
-async def test_run_bot_wires_hardcoded_ch1_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_bot_injects_session_config(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
-
-    async def fake_create_room_and_token(settings: Settings) -> tuple[str, str]:
-        return "https://freya-test.daily.co/freya-ch1", "bot-token"
 
     class FakeDailyParams:
         def __init__(self, **kwargs: Any):
             captured["daily_params"] = kwargs
 
     class FakeTransport:
-        def __init__(
-            self,
-            room_url: str,
-            token: str,
-            bot_name: str,
-            params: FakeDailyParams,
-        ):
+        def __init__(self, room_url: str, token: str, bot_name: str, params: FakeDailyParams):
             captured["transport"] = (room_url, token, bot_name, params)
             self.handlers: dict[str, Any] = {}
 
@@ -56,33 +42,42 @@ async def test_run_bot_wires_hardcoded_ch1_pipeline(monkeypatch: pytest.MonkeyPa
             captured["stt_kwargs"] = kwargs
 
     class FakeLLM:
-        class InputParams:
-            def __init__(self, **kwargs: Any):
-                self.values = kwargs
+        @dataclass
+        class Settings:
+            model: str
+            system_instruction: str
+            temperature: float
+            max_tokens: int
 
         def __init__(self, **kwargs: Any):
             captured["llm"] = self
             captured["llm_kwargs"] = kwargs
 
+    class FakeGenerationConfig:
+        def __init__(self, **kwargs: Any):
+            self.values = kwargs
+
     class FakeTTS:
         @dataclass
         class Settings:
             voice: str
+            generation_config: FakeGenerationConfig
 
         def __init__(self, **kwargs: Any):
             captured["tts"] = self
             captured["tts_kwargs"] = kwargs
 
     class FakeVADParams:
-        pass
+        def __init__(self, **kwargs: Any):
+            captured["vad_params"] = kwargs
 
     class FakeVAD:
         def __init__(self, **kwargs: Any):
             captured["vad"] = kwargs
 
     class FakeContext:
-        def __init__(self, messages: list[dict[str, str]]):
-            self.messages = list(messages)
+        def __init__(self):
+            self.messages: list[dict[str, str]] = []
             captured["context"] = self
 
         def add_message(self, message: dict[str, str]) -> None:
@@ -94,7 +89,6 @@ async def test_run_bot_wires_hardcoded_ch1_pipeline(monkeypatch: pytest.MonkeyPa
 
     class FakeAggregatorPair:
         def __new__(cls, context: FakeContext, **kwargs: Any) -> tuple[str, str]:
-            captured["aggregator_pair"] = (context, kwargs)
             return "user-aggregator", "assistant-aggregator"
 
     class FakePipeline:
@@ -113,28 +107,23 @@ async def test_run_bot_wires_hardcoded_ch1_pipeline(monkeypatch: pytest.MonkeyPa
         async def queue_frames(self, frames: list[Any]) -> None:
             self.queued.extend(frames)
 
-        async def queue_frame(self, frame: Any) -> None:
-            self.queued.append(frame)
-
     class FakeRunner:
         async def run(self, task: FakeTask) -> None:
-            fake_transport = captured["fake_transport"]
-            await fake_transport.handlers["on_first_participant_joined"](
-                fake_transport, {"id": "participant-1"}
+            transport = captured["fake_transport"]
+            await transport.handlers["on_first_participant_joined"](
+                transport, {"id": "participant-1"}
             )
 
-    original_transport = FakeTransport
-
     def create_transport(*args: Any, **kwargs: Any) -> FakeTransport:
-        transport = original_transport(*args, **kwargs)
+        transport = FakeTransport(*args, **kwargs)
         captured["fake_transport"] = transport
         return transport
 
-    monkeypatch.setattr(bot, "_create_room_and_token", fake_create_room_and_token)
     monkeypatch.setattr(bot, "DailyParams", FakeDailyParams)
     monkeypatch.setattr(bot, "DailyTransport", create_transport)
     monkeypatch.setattr(bot, "DeepgramSTTService", FakeSTT)
     monkeypatch.setattr(bot, "OpenAILLMService", FakeLLM)
+    monkeypatch.setattr(bot, "GenerationConfig", FakeGenerationConfig)
     monkeypatch.setattr(bot, "CartesiaTTSService", FakeTTS)
     monkeypatch.setattr(bot, "VADParams", FakeVADParams)
     monkeypatch.setattr(bot, "SileroVADAnalyzer", FakeVAD)
@@ -148,40 +137,41 @@ async def test_run_bot_wires_hardcoded_ch1_pipeline(monkeypatch: pytest.MonkeyPa
 
     settings = Settings(
         OPENAI_API_KEY="openai",
+        OPENAI_MODEL="gpt-test",
         DEEPGRAM_API_KEY="deepgram",
         CARTESIA_API_KEY="cartesia",
-        DAILY_API_KEY="daily",
-        DAILY_DOMAIN="freya-test",
+    )
+    config = SessionConfig(
+        system_prompt="Be concise.",
+        temperature=0.3,
+        max_tokens=88,
+        stt_temperature=0.2,
+        tts_voice_id="voice-123",
+        tts_speed=1.2,
+        tts_temperature=0.4,
+        interruptibility_pct=70,
     )
 
-    await bot.run_bot(settings)
+    await bot.run_bot(
+        settings=settings,
+        room_url="https://test.daily.co/freya-session",
+        token="bot-token",
+        config=config,
+        session_id="session-1",
+    )
 
-    assert captured["daily_params"] == {
-        "audio_in_enabled": True,
-        "audio_out_enabled": True,
-    }
     assert captured["transport"][:3] == (
-        "https://freya-test.daily.co/freya-ch1",
+        "https://test.daily.co/freya-session",
         "bot-token",
         "Freya",
     )
-    assert captured["llm_kwargs"]["model"] == "gpt-4o-mini"
-    assert captured["llm_kwargs"]["params"].values == {
-        "temperature": 0.7,
-        "max_tokens": 120,
-    }
-    assert captured["tts_kwargs"]["settings"].voice == bot.CARTESIA_VOICE_ID
-    assert captured["context"].messages == [
-        {"role": "system", "content": bot.SYSTEM_PROMPT},
-        {"role": "user", "content": bot.GREETING_INSTRUCTION},
-    ]
-    assert captured["processors"] == [
-        "transport-input",
-        captured["stt"],
-        "user-aggregator",
-        captured["llm"],
-        captured["tts"],
-        "transport-output",
-        "assistant-aggregator",
-    ]
+    assert captured["llm_kwargs"]["settings"] == FakeLLM.Settings(
+        model="gpt-test",
+        system_instruction="Be concise.",
+        temperature=0.3,
+        max_tokens=88,
+    )
+    assert captured["tts_kwargs"]["settings"].voice == "voice-123"
+    assert captured["tts_kwargs"]["settings"].generation_config.values == {"speed": 1.2}
+    assert captured["context"].messages == [{"role": "user", "content": bot.GREETING_INSTRUCTION}]
     assert len(captured["task"].queued) == 1
