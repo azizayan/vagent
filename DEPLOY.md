@@ -43,8 +43,6 @@ Initial boot after secrets are provisioned:
 ```bash
 git clone <repo>
 cd vagent
-cp .env.example .env
-$EDITOR .env
 docker compose up -d --build
 ```
 
