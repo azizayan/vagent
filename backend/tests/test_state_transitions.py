@@ -74,7 +74,7 @@ async def test_bot_stopped_speaking_emits_listening(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
-async def test_bot_started_while_idle_no_events_no_crash(
+async def test_proactive_bot_started_emits_speaking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Greeting case: BotStartedSpeakingFrame arrives before any user speech."""
@@ -83,7 +83,9 @@ async def test_bot_started_while_idle_no_events_no_crash(
 
     await tracker.process_frame(BotStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
 
-    assert events == []
+    assert len(events) == 1
+    assert isinstance(events[0], StateEvent)
+    assert events[0].state == "SPEAKING"
     tracker.push_frame.assert_called_once()
 
 

@@ -1,6 +1,13 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import {
+  CARTESIA_VOICES,
+  CUSTOM_VOICE_VALUE,
+  DEFAULT_CARTESIA_VOICE,
+  VoicePicker,
+} from "@/components/config/VoicePicker";
+
 // Minimal form component matching the shape in page.tsx for isolated testing
 function ConfigForm({
   onSubmit,
@@ -103,5 +110,66 @@ describe("Config form", () => {
     const ta = screen.getByRole("textbox", { name: /system prompt/i });
     await user.type(ta, "Hello, world!");
     expect(ta).toHaveValue("Hello, world!");
+  });
+});
+
+describe("Voice picker", () => {
+  it("lists the provided Cartesia voices and their roles", () => {
+    render(
+      <VoicePicker
+        disabled={false}
+        selectedVoice={DEFAULT_CARTESIA_VOICE.id}
+        customName=""
+        customVoiceId=""
+        onSelectedVoiceChange={() => undefined}
+        onCustomNameChange={() => undefined}
+        onCustomVoiceIdChange={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("option", { name: "Skylar — Friendly Guide" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Corey — Supportive Buddy" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Ella — Caring Scout" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Jacqueline — Reassuring Agent" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Cathy — Coworker" })).toBeInTheDocument();
+  });
+
+  it("shows required name and ID fields for a custom voice", () => {
+    render(
+      <VoicePicker
+        disabled={false}
+        selectedVoice={CUSTOM_VOICE_VALUE}
+        customName=""
+        customVoiceId=""
+        onSelectedVoiceChange={() => undefined}
+        onCustomNameChange={() => undefined}
+        onCustomVoiceIdChange={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("textbox", { name: /voice name/i })).toBeRequired();
+    expect(screen.getByRole("textbox", { name: /cartesia voice id/i })).toBeRequired();
+  });
+
+  it("passes the selected preset ID to the parent", async () => {
+    const user = userEvent.setup();
+    const onSelectedVoiceChange = jest.fn();
+    render(
+      <VoicePicker
+        disabled={false}
+        selectedVoice={DEFAULT_CARTESIA_VOICE.id}
+        customName=""
+        customVoiceId=""
+        onSelectedVoiceChange={onSelectedVoiceChange}
+        onCustomNameChange={() => undefined}
+        onCustomVoiceIdChange={() => undefined}
+      />,
+    );
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /voice/i }),
+      CARTESIA_VOICES[1]!.id,
+    );
+    expect(onSelectedVoiceChange).toHaveBeenCalledWith(CARTESIA_VOICES[1]!.id);
   });
 });

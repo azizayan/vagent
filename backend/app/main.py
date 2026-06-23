@@ -12,6 +12,7 @@ from app.core.logging import configure_logging, get_logger
 from app.core.settings import get_settings
 from app.services.agent_runner import AgentRunner
 from app.services.daily import DailyService
+from app.services.help_center import HelpCenterService
 
 
 @asynccontextmanager
@@ -19,11 +20,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.LOG_LEVEL)
     get_logger(__name__).info("backend.start", version=__version__)
-    app.state.agent_runner = AgentRunner(settings)
+    app.state.help_center = HelpCenterService(settings)
+    await app.state.help_center.seed_if_needed()
+    app.state.agent_runner = AgentRunner(settings, help_center=app.state.help_center)
     app.state.daily_service = DailyService(settings)
     yield
     await app.state.agent_runner.close()
     await app.state.daily_service.close()
+    await app.state.help_center.close()
     get_logger(__name__).info("backend.stop")
 
 

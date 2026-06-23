@@ -20,4 +20,13 @@ export type BotState = "LISTENING" | "THINKING" | "SPEAKING";
 export type StateEvent = { type: "state"; state: BotState; at: number };
 export type LatencyEvent = { type: "latency"; ms: number; at: number };
 export type InterruptionEvent = { type: "interruption"; at: number };
-export type DataChannelEvent = StateEvent | LatencyEvent | InterruptionEvent;
+export type SessionEndedEvent = {
+  type: "session_ended";
+  reason: "inactivity";
+  at: number;
+};
+export type DataChannelEvent =
+  | StateEvent
+  | LatencyEvent
+  | InterruptionEvent
+  | SessionEndedEvent;

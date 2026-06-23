@@ -22,11 +22,15 @@ from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.core.logging import get_logger
 from app.core.settings import Settings, get_settings
+from app.pipeline.idle_session import IdleSessionCoordinator
 from app.pipeline.processors.data_channel_sender import DataChannelSender
+from app.pipeline.processors.help_center_retriever import HelpCenterRetriever
 from app.pipeline.processors.output_guard import LLMOutputGuard
 from app.pipeline.processors.state_tracker import StateTracker
+from app.pipeline.prompts import resolve_system_prompt
 from app.pipeline.vad import map_interruptibility
 from app.schemas.config import SessionConfig
+from app.services.help_center import HelpCenterService
 
 BOT_NAME = "Freya"
 GREETING_INSTRUCTION = (
@@ -48,14 +52,19 @@ async def run_bot(
     config: SessionConfig,
     session_id: str,
     settings: Settings | None = None,
+    help_center: HelpCenterService | None = None,
 ) -> None:
     import time
 
     settings = settings or get_settings()
     bind_contextvars(session_id=session_id)
+    system_prompt, used_default = resolve_system_prompt(config.system_prompt)
     logger.info(
         "bot.starting",
         room_url=room_url,
+        system_prompt_used_default=used_default,
+        system_prompt_length=len(system_prompt),
+        system_prompt_preview=system_prompt[:120],
         temperature=config.temperature,
         max_tokens=config.max_tokens,
         tts_voice=config.tts_voice_id,
@@ -85,7 +94,7 @@ async def run_bot(
         api_key=_secret(settings, "OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
             model=settings.OPENAI_MODEL,
-            system_instruction=config.system_prompt,
+            system_instruction=system_prompt,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
         ),
@@ -102,6 +111,7 @@ async def run_bot(
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
+            user_idle_timeout=settings.USER_IDLE_PROMPT_SECONDS,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(**map_interruptibility(config.interruptibility_pct))
             ),
@@ -110,6 +120,11 @@ async def run_bot(
 
     sender = DataChannelSender()
     tracker = StateTracker(session_start=session_start, on_event=sender.send_event)
+    retrieval_processors = (
+        [HelpCenterRetriever(help_center, ignored_questions={GREETING_INSTRUCTION})]
+        if help_center
+        else []
+    )
 
     pipeline = Pipeline(
         [
@@ -117,6 +132,7 @@ async def run_bot(
             tracker,
             stt,
             user_aggregator,
+            *retrieval_processors,
             llm,
             LLMOutputGuard(),
             tts,
@@ -129,6 +145,21 @@ async def run_bot(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
     )
+    idle_session = IdleSessionCoordinator(
+        task=task,
+        on_event=sender.send_event,
+        session_start=session_start,
+        prompt_seconds=settings.USER_IDLE_PROMPT_SECONDS,
+        close_seconds=settings.SESSION_IDLE_CLOSE_SECONDS,
+    )
+
+    @user_aggregator.event_handler("on_user_turn_idle")  # type: ignore[untyped-decorator]
+    async def on_user_turn_idle(user_aggregator: object) -> None:
+        await idle_session.on_user_turn_idle()
+
+    @user_aggregator.event_handler("on_user_turn_started")  # type: ignore[untyped-decorator]
+    async def on_user_turn_started(user_aggregator: object, strategy: object) -> None:
+        await idle_session.on_user_turn_started()
 
     @transport.event_handler("on_first_participant_joined")  # type: ignore[untyped-decorator]
     async def on_first_participant_joined(

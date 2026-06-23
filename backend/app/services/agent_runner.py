@@ -6,13 +6,15 @@ from app.bot import run_bot
 from app.core.logging import get_logger
 from app.core.settings import Settings
 from app.schemas.config import SessionConfig
+from app.services.help_center import HelpCenterService
 
 logger = get_logger(__name__)
 
 
 class AgentRunner:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, help_center: HelpCenterService | None = None) -> None:
         self._settings = settings
+        self._help_center = help_center
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     def ensure_ready(self) -> None:
@@ -35,6 +37,7 @@ class AgentRunner:
                 token=token,
                 config=config,
                 session_id=session_id,
+                help_center=self._help_center,
             ),
             name=f"freya-agent-{session_id}",
         )

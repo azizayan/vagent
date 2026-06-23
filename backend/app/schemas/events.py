@@ -22,7 +22,13 @@ class InterruptionEvent(BaseModel):
     at: float
 
 
+class SessionEndedEvent(BaseModel):
+    type: Literal["session_ended"] = "session_ended"
+    reason: Literal["inactivity"]
+    at: float
+
+
 DataChannelEvent = Annotated[
-    StateEvent | LatencyEvent | InterruptionEvent,
+    StateEvent | LatencyEvent | InterruptionEvent | SessionEndedEvent,
     Field(discriminator="type"),
 ]

@@ -5,6 +5,17 @@
 name: freya
 
 services:
+  qdrant:
+    image: qdrant/qdrant:v1.14.1
+    restart: unless-stopped
+    mem_limit: 256m
+    expose:
+      - "6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - freya
+
   backend:
     build:
       context: ./backend
@@ -14,13 +25,18 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
       CARTESIA_API_KEY: ${CARTESIA_API_KEY:-}
       CARTESIA_DEFAULT_VOICE_ID: ${CARTESIA_DEFAULT_VOICE_ID:-}
       DAILY_API_KEY: ${DAILY_API_KEY:-}
       DAILY_DOMAIN: ${DAILY_DOMAIN:-}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-freya_help_center}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      USER_IDLE_PROMPT_SECONDS: ${USER_IDLE_PROMPT_SECONDS:-60}
+      SESSION_IDLE_CLOSE_SECONDS: ${SESSION_IDLE_CLOSE_SECONDS:-300}
     expose:
       - "8000"
     # Backend is not published to the host by default — the frontend container
@@ -31,6 +47,8 @@ services:
     #   - "8000:8000"
     networks:
       - freya
+    depends_on:
+      - qdrant
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2).status==200 else 1)"]
       interval: 15s
@@ -71,3 +89,6 @@ services:
 networks:
   freya:
     driver: bridge
+
+volumes:
+  qdrant-data:

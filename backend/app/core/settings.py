@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, cast
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.core.errors import ConfigError
@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # ---- OpenAI ----
     OPENAI_API_KEY: SecretStr | None = None
     OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     # ---- Deepgram ----
     DEEPGRAM_API_KEY: SecretStr | None = None
@@ -39,6 +40,10 @@ class Settings(BaseSettings):
     DAILY_API_KEY: SecretStr | None = None
     DAILY_DOMAIN: str | None = None
 
+    # ---- Qdrant help center ----
+    QDRANT_URL: str = "http://qdrant:6333"
+    QDRANT_COLLECTION: str = "freya_help_center"
+
     # ---- Runtime ----
     # NoDecode bypasses pydantic-settings' built-in JSON parse so the env value
     # arrives as a raw string and our field_validator below handles it.
@@ -46,6 +51,8 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:3000"]
     )
     LOG_LEVEL: str = "INFO"
+    USER_IDLE_PROMPT_SECONDS: float = Field(default=60, gt=0)
+    SESSION_IDLE_CLOSE_SECONDS: float = Field(default=300, gt=0)
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
@@ -64,6 +71,14 @@ class Settings(BaseSettings):
                 return stripped  # JSON — let pydantic decode
             return [item.strip() for item in stripped.split(",") if item.strip()]
         return value
+
+    @model_validator(mode="after")
+    def _validate_idle_timeouts(self) -> "Settings":
+        if self.SESSION_IDLE_CLOSE_SECONDS <= self.USER_IDLE_PROMPT_SECONDS:
+            raise ValueError(
+                "SESSION_IDLE_CLOSE_SECONDS must be greater than USER_IDLE_PROMPT_SECONDS"
+            )
+        return self
 
     def require(self, name: str) -> SecretStr | str:
         value = getattr(self, name, None)

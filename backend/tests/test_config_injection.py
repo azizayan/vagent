@@ -87,13 +87,30 @@ async def test_run_bot_injects_session_config(monkeypatch: pytest.MonkeyPatch) -
         def __init__(self, **kwargs: Any):
             captured["user_aggregator_params"] = kwargs
 
+    class FakeUserAggregator:
+        def __init__(self) -> None:
+            self.handlers: dict[str, Any] = {}
+
+        def event_handler(self, name: str):
+            def register(handler: Any) -> Any:
+                self.handlers[name] = handler
+                return handler
+
+            return register
+
     class FakeAggregatorPair:
-        def __new__(cls, context: FakeContext, **kwargs: Any) -> tuple[str, str]:
-            return "user-aggregator", "assistant-aggregator"
+        def __new__(cls, context: FakeContext, **kwargs: Any) -> tuple[FakeUserAggregator, str]:
+            aggregator = FakeUserAggregator()
+            captured["user_aggregator"] = aggregator
+            return aggregator, "assistant-aggregator"
 
     class FakePipeline:
         def __init__(self, processors: list[Any]):
             captured["processors"] = processors
+
+    class FakeRetriever:
+        def __init__(self, service: object, **kwargs: Any):
+            captured["retriever"] = (service, kwargs)
 
     class FakePipelineParams:
         def __init__(self, **kwargs: Any):
@@ -106,6 +123,9 @@ async def test_run_bot_injects_session_config(monkeypatch: pytest.MonkeyPatch) -
 
         async def queue_frames(self, frames: list[Any]) -> None:
             self.queued.extend(frames)
+
+        async def stop_when_done(self) -> None:
+            captured["stopped"] = True
 
     class FakeRunner:
         async def run(self, task: FakeTask) -> None:
@@ -130,6 +150,7 @@ async def test_run_bot_injects_session_config(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(bot, "LLMContext", FakeContext)
     monkeypatch.setattr(bot, "LLMUserAggregatorParams", FakeUserAggregatorParams)
     monkeypatch.setattr(bot, "LLMContextAggregatorPair", FakeAggregatorPair)
+    monkeypatch.setattr(bot, "HelpCenterRetriever", FakeRetriever)
     monkeypatch.setattr(bot, "Pipeline", FakePipeline)
     monkeypatch.setattr(bot, "PipelineParams", FakePipelineParams)
     monkeypatch.setattr(bot, "PipelineTask", FakeTask)
@@ -151,6 +172,7 @@ async def test_run_bot_injects_session_config(monkeypatch: pytest.MonkeyPatch) -
         tts_temperature=0.4,
         interruptibility_pct=70,
     )
+    help_center = object()
 
     await bot.run_bot(
         settings=settings,
@@ -158,6 +180,7 @@ async def test_run_bot_injects_session_config(monkeypatch: pytest.MonkeyPatch) -
         token="bot-token",
         config=config,
         session_id="session-1",
+        help_center=help_center,  # type: ignore[arg-type]
     )
 
     assert captured["transport"][:3] == (
@@ -173,5 +196,15 @@ async def test_run_bot_injects_session_config(monkeypatch: pytest.MonkeyPatch) -
     )
     assert captured["tts_kwargs"]["settings"].voice == "voice-123"
     assert captured["tts_kwargs"]["settings"].generation_config.values == {"speed": 1.2}
+    assert captured["user_aggregator_params"]["user_idle_timeout"] == 60
     assert captured["context"].messages == [{"role": "user", "content": bot.GREETING_INSTRUCTION}]
+    assert captured["retriever"] == (
+        help_center,
+        {"ignored_questions": {bot.GREETING_INSTRUCTION}},
+    )
+    assert captured["processors"][4].__class__ is FakeRetriever
     assert len(captured["task"].queued) == 1
+    assert set(captured["user_aggregator"].handlers) == {
+        "on_user_turn_idle",
+        "on_user_turn_started",
+    }

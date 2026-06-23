@@ -6,6 +6,7 @@ const initial: DataChannelState = {
   botState: null,
   latencyMs: null,
   interruptions: [],
+  sessionEndedReason: null,
 };
 
 describe("useDataChannel reducer", () => {
@@ -53,6 +54,16 @@ describe("useDataChannel reducer", () => {
     const withLatency = reducer(initial, { type: "latency", ms: 120, at: 100 });
     const withState = reducer(withLatency, { type: "state", state: "SPEAKING", at: 200 });
     expect(withState.latencyMs).toBe(120);
+  });
+
+  it("records inactivity session end events", () => {
+    const state = reducer(initial, {
+      type: "session_ended",
+      reason: "inactivity",
+      at: 300_000,
+    });
+
+    expect(state.sessionEndedReason).toBe("inactivity");
   });
 
   it("handles a full conversation sequence", () => {

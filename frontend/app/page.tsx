@@ -1,21 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import type { DailyCall } from "@daily-co/daily-js";
 import { useMutation } from "@tanstack/react-query";
 
+import {
+  CUSTOM_VOICE_VALUE,
+  DEFAULT_CARTESIA_VOICE,
+  VoicePicker,
+} from "@/components/config/VoicePicker";
 import { useDataChannel } from "@/hooks/useDataChannel";
 import { api } from "@/lib/api";
 import { createDailyCall, destroyDailyCall } from "@/lib/daily";
+import { DEFAULT_SYSTEM_PROMPT } from "@/lib/defaults";
 import type { SessionConfig, SessionResponse } from "@/types/contract";
 
 const defaultConfig: SessionConfig = {
-  system_prompt: "You are a helpful, concise voice assistant. Keep replies under three sentences.",
+  system_prompt: DEFAULT_SYSTEM_PROMPT,
   temperature: 0.7,
   max_tokens: 160,
   stt_temperature: 0,
-  tts_voice_id: "71a7ad14-091c-4e8e-a314-022ece01c121",
+  tts_voice_id: DEFAULT_CARTESIA_VOICE.id,
   tts_speed: 1,
   tts_temperature: 0.7,
   interruptibility_pct: 50,
@@ -24,9 +30,31 @@ const defaultConfig: SessionConfig = {
 export default function HomePage() {
   const [call, setCall] = useState<DailyCall | null>(null);
   const [config, setConfig] = useState<SessionConfig>(defaultConfig);
+  const [selectedVoice, setSelectedVoice] = useState(defaultConfig.tts_voice_id);
+  const [customVoiceName, setCustomVoiceName] = useState("");
+  const [customVoiceId, setCustomVoiceId] = useState("");
   const [connected, setConnected] = useState(false);
   const [sessionId, setSessionId] = useState("");
-  const { botState, latencyMs, interruptions } = useDataChannel(call);
+  const [inactivityNotice, setInactivityNotice] = useState(false);
+  const handleSessionEnded = useCallback(
+    (reason: "inactivity", endedCall: DailyCall) => {
+      if (reason !== "inactivity") {
+        return;
+      }
+
+      setInactivityNotice(true);
+      setConnected(false);
+      setSessionId("");
+      void destroyDailyCall(endedCall).finally(() => {
+        setCall((current) => (current === endedCall ? null : current));
+      });
+    },
+    [],
+  );
+  const { botState, latencyMs, interruptions } = useDataChannel(
+    call,
+    handleSessionEnded,
+  );
 
   const sessionMutation = useMutation({
     mutationFn: (cfg: SessionConfig) => api.post<SessionResponse>("/session", cfg),
@@ -59,6 +87,9 @@ export default function HomePage() {
   };
 
   const busy = sessionMutation.isPending;
+  const customVoiceIncomplete =
+    selectedVoice === CUSTOM_VOICE_VALUE &&
+    (!customVoiceName.trim() || !customVoiceId.trim());
   const error =
     sessionMutation.error instanceof Error
       ? sessionMutation.error.message
@@ -84,9 +115,10 @@ export default function HomePage() {
           <div className="field">
             <span className="field-label">System prompt</span>
             <textarea
+              className="system-prompt-input"
               required
               maxLength={4000}
-              rows={5}
+              rows={11}
               disabled={connected || busy}
               value={config.system_prompt}
               onChange={(e) =>
@@ -144,17 +176,6 @@ export default function HomePage() {
               />
             </div>
             <div className="field">
-              <span className="field-label">Voice ID</span>
-              <input
-                required
-                disabled={connected || busy}
-                value={config.tts_voice_id}
-                onChange={(e) =>
-                  setConfig((c) => ({ ...c, tts_voice_id: e.target.value }))
-                }
-              />
-            </div>
-            <div className="field">
               <span className="field-label">Voice speed</span>
               <input
                 type="number"
@@ -167,6 +188,26 @@ export default function HomePage() {
               />
             </div>
           </div>
+
+          <VoicePicker
+            disabled={connected || busy}
+            selectedVoice={selectedVoice}
+            customName={customVoiceName}
+            customVoiceId={customVoiceId}
+            onSelectedVoiceChange={(value) => {
+              setSelectedVoice(value);
+              setConfig((current) => ({
+                ...current,
+                tts_voice_id:
+                  value === CUSTOM_VOICE_VALUE ? customVoiceId : value,
+              }));
+            }}
+            onCustomNameChange={setCustomVoiceName}
+            onCustomVoiceIdChange={(value) => {
+              setCustomVoiceId(value);
+              setConfig((current) => ({ ...current, tts_voice_id: value }));
+            }}
+          />
 
           <div className="field">
             <span className="field-label">
@@ -191,8 +232,11 @@ export default function HomePage() {
           {!connected && (
             <button
               className="btn-primary"
-              disabled={busy}
-              onClick={() => sessionMutation.mutate(config)}
+              disabled={busy || customVoiceIncomplete}
+              onClick={() => {
+                setInactivityNotice(false);
+                sessionMutation.mutate(config);
+              }}
             >
               {busy ? "Connecting…" : "Start session"}
             </button>
@@ -202,9 +246,15 @@ export default function HomePage() {
         {/* ── RIGHT: Session ── */}
         <main className="panel-session">
           {!connected ? (
-            <p className="session-idle">
-              Configure the agent on the left, then start a session.
-            </p>
+            inactivityNotice ? (
+              <p className="session-idle" role="status">
+                Session ended due to inactivity.
+              </p>
+            ) : (
+              <p className="session-idle">
+                Configure the agent on the left, then start a session.
+              </p>
+            )
           ) : (
             <>
               <div

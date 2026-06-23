@@ -10,6 +10,7 @@ from app.main import app
 from app.schemas.config import SessionConfig
 from app.services.agent_runner import AgentRunner
 from app.services.daily import DailyService, DailySession
+from app.services.help_center import HelpCenterService
 
 
 def session_body() -> dict[str, object]:
@@ -52,6 +53,7 @@ def test_post_session_starts_agent_with_daily_credentials(
     monkeypatch.setattr(AgentRunner, "ensure_ready", lambda self: None)
     monkeypatch.setattr(DailyService, "create_session", fake_create_session)
     monkeypatch.setattr(AgentRunner, "start", fake_start)
+    monkeypatch.setattr(HelpCenterService, "seed_if_needed", lambda self: _async_none())
 
     with TestClient(app) as client:
         response = client.post("/session", json=session_body())
@@ -103,3 +105,7 @@ async def test_daily_service_creates_private_room_and_separate_tokens() -> None:
         "/v1/meeting-tokens",
     ]
     assert b'"privacy":"private"' in requests[0].content
+
+
+async def _async_none() -> None:
+    return None

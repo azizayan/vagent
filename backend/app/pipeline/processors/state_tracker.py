@@ -37,7 +37,7 @@ class StateTracker(FrameProcessor):
 
     FSM transitions:
         UserStoppedSpeakingFrame  → THINKING  (start latency clock)
-        BotStartedSpeakingFrame   → SPEAKING  (stop clock, emit LatencyEvent) [only from THINKING]
+        BotStartedSpeakingFrame   → SPEAKING  (emit LatencyEvent only from THINKING)
         BotStoppedSpeakingFrame   → LISTENING
         UserStartedSpeakingFrame  → LISTENING + InterruptionEvent [only from SPEAKING]
     """
@@ -78,9 +78,11 @@ class StateTracker(FrameProcessor):
                 await self._emit(StateEvent(state="SPEAKING", at=now))
                 await self._emit(LatencyEvent(ms=latency_ms, at=now))
                 logger.debug("state_tracker.speaking", latency_ms=latency_ms)
-            else:
-                # Greeting or bot started speaking without a prior UserStoppedSpeakingFrame
+            elif self._state != _BotState.SPEAKING:
+                # Greeting or direct TTS without a prior UserStoppedSpeakingFrame.
                 self._state = _BotState.SPEAKING
+                await self._emit(StateEvent(state="SPEAKING", at=self._now_ms()))
+                logger.debug("state_tracker.speaking")
 
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._state = _BotState.LISTENING

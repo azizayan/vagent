@@ -1,0 +1,92 @@
+[
+  {
+    "id": 1,
+    "question": "How long is Freya's return window?",
+    "answer": "Freya accepts returns within 37 days of delivery."
+  },
+  {
+    "id": 2,
+    "question": "How quickly are refunds processed?",
+    "answer": "Approved refunds are sent to the original payment method within 4 business days."
+  },
+  {
+    "id": 3,
+    "question": "Can I exchange an item?",
+    "answer": "Freya does not process direct exchanges. Return the original item and place a new order."
+  },
+  {
+    "id": 4,
+    "question": "Is return shipping free?",
+    "answer": "Return shipping is free for damaged or incorrect items. Other returns have a 6 dollar label fee."
+  },
+  {
+    "id": 5,
+    "question": "How do I start a return?",
+    "answer": "Open the Returns page, enter your order number and email address, then choose the item and reason."
+  },
+  {
+    "id": 6,
+    "question": "When will my order ship?",
+    "answer": "In-stock orders leave the warehouse within 2 business days."
+  },
+  {
+    "id": 7,
+    "question": "How long does standard delivery take?",
+    "answer": "Standard delivery usually takes 5 to 7 business days after the order ships."
+  },
+  {
+    "id": 8,
+    "question": "Does Freya offer express shipping?",
+    "answer": "Express shipping takes 2 business days and costs 14 dollars."
+  },
+  {
+    "id": 9,
+    "question": "Can I change my shipping address?",
+    "answer": "The shipping address can be changed within 30 minutes of placing the order."
+  },
+  {
+    "id": 10,
+    "question": "Where can I find tracking?",
+    "answer": "Tracking appears in the shipping confirmation email and in the Orders section of your account."
+  },
+  {
+    "id": 11,
+    "question": "What is the support email address?",
+    "answer": "Freya customer support can be reached at help at freya.example."
+  },
+  {
+    "id": 12,
+    "question": "What are support hours?",
+    "answer": "Live support is available Monday through Friday, 8 AM to 6 PM Eastern Time."
+  },
+  {
+    "id": 13,
+    "question": "Can I cancel an order?",
+    "answer": "Orders can be cancelled within 30 minutes of checkout if warehouse processing has not started."
+  },
+  {
+    "id": 14,
+    "question": "What payment methods are accepted?",
+    "answer": "Freya accepts Visa, Mastercard, American Express, Apple Pay, and Google Pay."
+  },
+  {
+    "id": 15,
+    "question": "Do products have a warranty?",
+    "answer": "Freya products include a 14 month limited warranty covering manufacturing defects."
+  },
+  {
+    "id": 16,
+    "question": "What happens if my item arrives damaged?",
+    "answer": "Report damaged items within 7 days of delivery for a free replacement or full refund."
+  },
+  {
+    "id": 17,
+    "question": "Does Freya ship internationally?",
+    "answer": "Freya currently ships only within the United States and Canada."
+  },
+  {
+    "id": 18,
+    "question": "Is there a loyalty program?",
+    "answer": "Freya Circle awards 3 points per dollar, and 300 points can be redeemed for 10 dollars off."
+  }
+]

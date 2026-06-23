@@ -131,6 +131,7 @@ body {
 input[type="number"],
 input[type="text"],
 input:not([type]),
+select,
 textarea {
   width: 100%;
   padding: 0.55rem 0.7rem;
@@ -144,12 +145,14 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
 }
 
 input:disabled,
+select:disabled,
 textarea:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -157,6 +160,31 @@ textarea:disabled {
 
 textarea {
   resize: vertical;
+}
+
+.system-prompt-input {
+  min-height: 13.5rem;
+}
+
+.voice-picker {
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(18, 22, 32, 0.45);
+}
+
+.voice-description {
+  min-height: 2.5rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.custom-voice-fields {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 0.65rem;
+  margin-top: 0.25rem;
 }
 
 input[type="range"] {

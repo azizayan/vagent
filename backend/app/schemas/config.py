@@ -10,7 +10,7 @@ MAX_SYSTEM_PROMPT_LENGTH = 4000
 
 
 class SessionConfig(BaseModel):
-    system_prompt: str = Field(min_length=1, max_length=MAX_SYSTEM_PROMPT_LENGTH)
+    system_prompt: str = Field(default="", max_length=MAX_SYSTEM_PROMPT_LENGTH)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=120, ge=1, le=4096)
     stt_temperature: float = Field(default=0.0, ge=0.0, le=1.0)
