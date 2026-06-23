@@ -18,6 +18,13 @@ from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
+from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
+    MinWordsUserTurnStartStrategy,
+)
+from pipecat.turns.user_turn_strategies import (
+    UserTurnStrategies,
+    default_user_turn_stop_strategies,
+)
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.core.logging import get_logger
@@ -29,7 +36,11 @@ from app.pipeline.processors.output_guard import LLMOutputGuard
 from app.pipeline.processors.state_tracker import StateTracker
 from app.pipeline.prompts import resolve_system_prompt
 from app.pipeline.tts_emotion import temperature_to_emotion
-from app.pipeline.vad import map_interruptibility
+from app.pipeline.vad import (
+    interruptions_enabled,
+    map_interrupt_gate,
+    map_interruptibility,
+)
 from app.schemas.config import SessionConfig
 from app.services.help_center import HelpCenterService
 
@@ -61,6 +72,8 @@ async def run_bot(
     bind_contextvars(session_id=session_id)
     system_prompt, used_default = resolve_system_prompt(config.system_prompt)
     tts_emotion = temperature_to_emotion(config.tts_temperature)
+    interruptions_active = interruptions_enabled(config.interruptibility_pct)
+    interrupt_gate = map_interrupt_gate(config.interruptibility_pct)
     logger.info(
         "bot.starting",
         room_url=room_url,
@@ -79,6 +92,9 @@ async def run_bot(
         stt_temperature=config.stt_temperature,
         stt_temperature_applied=False,
         interruptibility_pct=config.interruptibility_pct,
+        interruptions_active=interruptions_active,
+        interrupt_min_words=interrupt_gate["min_words"],
+        interrupt_use_interim=interrupt_gate["use_interim"],
     )
     session_start = time.monotonic()
 
@@ -115,12 +131,32 @@ async def run_bot(
     )
 
     context = LLMContext()
+    allow_interruptions = interruptions_enabled(config.interruptibility_pct)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
             user_idle_timeout=settings.USER_IDLE_PROMPT_SECONDS,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(**map_interruptibility(config.interruptibility_pct))
+            ),
+            # MinWordsUserTurnStartStrategy gates barge-in on transcribed word
+            # count, not raw VAD energy. While the bot is speaking, the user
+            # must produce `min_words` words (via interim or final Deepgram
+            # transcripts) before broadcast_interruption() fires. When the bot
+            # is not speaking the strategy falls back to a 1-word threshold,
+            # so normal turn-taking is unaffected.
+            #
+            # pct=0 additionally hard-disables interruption broadcasting —
+            # semantically "off", not just "very hard".
+            user_turn_strategies=UserTurnStrategies(
+                start=[
+                    MinWordsUserTurnStartStrategy(
+                        min_words=interrupt_gate["min_words"],
+                        use_interim=interrupt_gate["use_interim"],
+                        enable_interruptions=allow_interruptions,
+                    ),
+                ],
+                stop=default_user_turn_stop_strategies(),
             ),
         ),
     )

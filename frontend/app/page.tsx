@@ -11,9 +11,10 @@ import {
   VoicePicker,
 } from "@/components/config/VoicePicker";
 import { useDataChannel } from "@/hooks/useDataChannel";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { createDailyCall, destroyDailyCall } from "@/lib/daily";
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/defaults";
+import { type FieldErrors, validateSessionConfig } from "@/lib/validate";
 import type { SessionConfig, SessionResponse } from "@/types/contract";
 
 const defaultConfig: SessionConfig = {
@@ -56,6 +57,8 @@ export default function HomePage() {
     handleSessionEnded,
   );
 
+  const [clientErrors, setClientErrors] = useState<FieldErrors>({});
+
   const sessionMutation = useMutation({
     mutationFn: (cfg: SessionConfig) => api.post<SessionResponse>("/session", cfg),
     onSuccess: async (session) => {
@@ -71,6 +74,41 @@ export default function HomePage() {
       }
     },
   });
+
+  const serverFieldErrors: FieldErrors = (() => {
+    const out: FieldErrors = {};
+    if (sessionMutation.error instanceof ApiError && sessionMutation.error.fields) {
+      for (const [path, msg] of Object.entries(sessionMutation.error.fields)) {
+        const last = path.split(".").pop() ?? path;
+        if (last in defaultConfig) {
+          out[last as keyof SessionConfig] = msg;
+        }
+      }
+    }
+    return out;
+  })();
+
+  const fieldErrors: FieldErrors = { ...serverFieldErrors, ...clientErrors };
+
+  const handleStart = (): void => {
+    setInactivityNotice(false);
+    const errors = validateSessionConfig(config);
+    setClientErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      return;
+    }
+    sessionMutation.mutate(config);
+  };
+
+  const fieldError = (name: keyof SessionConfig) => {
+    const msg = fieldErrors[name];
+    if (!msg) return null;
+    return (
+      <p className="field-error" role="alert" id={`${name}-error`}>
+        {msg}
+      </p>
+    );
+  };
 
   const disconnect = async (): Promise<void> => {
     sessionMutation.reset();
@@ -90,12 +128,20 @@ export default function HomePage() {
   const customVoiceIncomplete =
     selectedVoice === CUSTOM_VOICE_VALUE &&
     (!customVoiceName.trim() || !customVoiceId.trim());
-  const error =
-    sessionMutation.error instanceof Error
-      ? sessionMutation.error.message
-      : sessionMutation.error
-        ? "Unable to join the Daily room."
-        : null;
+
+  const apiErr =
+    sessionMutation.error instanceof ApiError ? sessionMutation.error : null;
+  const isRateLimited = apiErr?.status === 429;
+  const rateLimitSeconds = apiErr?.retryAfterSeconds ?? null;
+  const error: string | null = (() => {
+    if (!sessionMutation.error) return null;
+    if (isRateLimited && rateLimitSeconds !== null) {
+      return `Too many sessions. Try again in ${Math.ceil(rateLimitSeconds)} seconds.`;
+    }
+    if (apiErr) return apiErr.message;
+    if (sessionMutation.error instanceof Error) return sessionMutation.error.message;
+    return "Unable to join the Daily room.";
+  })();
 
   return (
     <div className="app">
@@ -113,79 +159,111 @@ export default function HomePage() {
         {/* ── LEFT: Config ── */}
         <aside className="panel-config">
           <div className="field">
-            <span className="field-label">System prompt</span>
+            <label className="field-label" htmlFor="system_prompt">
+              System prompt
+            </label>
             <textarea
+              id="system_prompt"
               className="system-prompt-input"
-              required
               maxLength={4000}
               rows={11}
               disabled={connected || busy}
+              aria-invalid={Boolean(fieldErrors.system_prompt)}
+              aria-describedby={
+                fieldErrors.system_prompt ? "system_prompt-error" : undefined
+              }
               value={config.system_prompt}
               onChange={(e) =>
                 setConfig((c) => ({ ...c, system_prompt: e.target.value }))
               }
             />
+            {fieldError("system_prompt")}
           </div>
 
           <div className="field-grid-2">
             <div className="field">
-              <span className="field-label">LLM temperature</span>
+              <label className="field-label" htmlFor="temperature">
+                LLM temperature
+              </label>
               <input
+                id="temperature"
                 type="number"
                 min="0"
                 max="2"
                 step="0.1"
                 disabled={connected || busy}
+                aria-invalid={Boolean(fieldErrors.temperature)}
                 value={config.temperature}
                 onChange={(e) => setNum("temperature", e.target.value)}
               />
+              {fieldError("temperature")}
             </div>
             <div className="field">
-              <span className="field-label">Max tokens</span>
+              <label className="field-label" htmlFor="max_tokens">
+                Max tokens
+              </label>
               <input
+                id="max_tokens"
                 type="number"
                 min="1"
                 max="4096"
                 disabled={connected || busy}
+                aria-invalid={Boolean(fieldErrors.max_tokens)}
                 value={config.max_tokens}
                 onChange={(e) => setNum("max_tokens", e.target.value)}
               />
+              {fieldError("max_tokens")}
             </div>
             <div className="field">
-              <span className="field-label">STT temperature</span>
+              <label className="field-label" htmlFor="stt_temperature">
+                STT temperature
+              </label>
               <input
+                id="stt_temperature"
                 type="number"
                 min="0"
                 max="1"
                 step="0.1"
                 disabled={connected || busy}
+                aria-invalid={Boolean(fieldErrors.stt_temperature)}
                 value={config.stt_temperature}
                 onChange={(e) => setNum("stt_temperature", e.target.value)}
               />
+              {fieldError("stt_temperature")}
             </div>
             <div className="field">
-              <span className="field-label">TTS temperature</span>
+              <label className="field-label" htmlFor="tts_temperature">
+                TTS temperature
+              </label>
               <input
+                id="tts_temperature"
                 type="number"
                 min="0"
                 max="1"
                 step="0.1"
                 disabled={connected || busy}
+                aria-invalid={Boolean(fieldErrors.tts_temperature)}
                 value={config.tts_temperature}
                 onChange={(e) => setNum("tts_temperature", e.target.value)}
               />
+              {fieldError("tts_temperature")}
             </div>
             <div className="field">
-              <span className="field-label">Voice speed</span>
+              <label className="field-label" htmlFor="tts_speed">
+                Voice speed
+              </label>
               <input
+                id="tts_speed"
                 type="number"
                 min="0.6"
                 max="1.5"
                 step="0.1"
                 disabled={connected || busy}
+                aria-invalid={Boolean(fieldErrors.tts_speed)}
                 value={config.tts_speed}
                 onChange={(e) => setNum("tts_speed", e.target.value)}
               />
+              {fieldError("tts_speed")}
             </div>
           </div>
 
@@ -208,19 +286,23 @@ export default function HomePage() {
               setConfig((current) => ({ ...current, tts_voice_id: value }));
             }}
           />
+          {fieldError("tts_voice_id")}
 
           <div className="field">
-            <span className="field-label">
+            <label className="field-label" htmlFor="interruptibility_pct">
               Interruptibility: {config.interruptibility_pct}%
-            </span>
+            </label>
             <input
+              id="interruptibility_pct"
               type="range"
               min="0"
               max="100"
               disabled={connected || busy}
+              aria-invalid={Boolean(fieldErrors.interruptibility_pct)}
               value={config.interruptibility_pct}
               onChange={(e) => setNum("interruptibility_pct", e.target.value)}
             />
+            {fieldError("interruptibility_pct")}
           </div>
 
           {error && (
@@ -233,13 +315,15 @@ export default function HomePage() {
             <button
               className="btn-primary"
               disabled={busy || customVoiceIncomplete}
-              onClick={() => {
-                setInactivityNotice(false);
-                sessionMutation.mutate(config);
-              }}
+              onClick={handleStart}
             >
               {busy ? "Connecting…" : "Start session"}
             </button>
+          )}
+          {customVoiceIncomplete && (
+            <p className="field-error" role="alert">
+              Enter a name and voice ID for the custom voice, or pick a preset above.
+            </p>
           )}
         </aside>
 

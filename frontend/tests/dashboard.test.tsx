@@ -1,97 +1,132 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
-import type { BotState } from "@/types/contract";
+import HomePage from "@/app/page";
+import type { DataChannelState } from "@/hooks/useDataChannel";
 
-// Minimal dashboard component extracted for isolated testing
-function Dashboard({
-  botState,
-  latencyMs,
-  interruptions,
-}: {
-  botState: BotState | null;
-  latencyMs: number | null;
-  interruptions: { at: number }[];
-}) {
-  return (
-    <section aria-label="Session dashboard">
-      <p>
-        Status:{" "}
-        <span data-state={botState ?? "idle"}>{botState ?? "—"}</span>
-      </p>
-      <p>Latency: {latencyMs !== null ? `${Math.round(latencyMs)} ms` : "—"}</p>
-      {interruptions.length > 0 && (
-        <details>
-          <summary>Interruptions ({interruptions.length})</summary>
-          <ol>
-            {interruptions.map((ev) => (
-              <li key={ev.at}>{Math.round(ev.at)} ms</li>
-            ))}
-          </ol>
-        </details>
-      )}
-    </section>
-  );
+const mockCall = {
+  join: jest.fn().mockResolvedValue(undefined),
+  leave: jest.fn().mockResolvedValue(undefined),
+  destroy: jest.fn(),
+};
+let mockDataState: DataChannelState;
+
+jest.mock("../lib/daily", () => ({
+  createDailyCall: () => mockCall,
+  destroyDailyCall: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("../hooks/useDataChannel", () => ({
+  useDataChannel: () => mockDataState,
+}));
+
+jest.mock("../lib/api", () => {
+  class ApiError extends Error {
+    public readonly fields: Record<string, string> | null = null;
+    public readonly retryAfterSeconds: number | null = null;
+
+    constructor(
+      public readonly status: number,
+      public readonly body: unknown,
+      message: string,
+    ) {
+      super(message);
+      this.name = "ApiError";
+    }
+  }
+
+  return {
+    api: { post: jest.fn() },
+    ApiError,
+  };
+});
+
+jest.mock("@tanstack/react-query", () => ({
+  useMutation: (options: {
+    onSuccess: (session: {
+      roomUrl: string;
+      token: string;
+      sessionId: string;
+    }) => Promise<void>;
+  }) => ({
+    mutate: () =>
+      void options.onSuccess({
+        roomUrl: "https://test.daily.co/room",
+        token: "token",
+        sessionId: "session-1",
+      }),
+    reset: jest.fn(),
+    isPending: false,
+    error: null,
+  }),
+}));
+
+async function renderConnectedDashboard(state: DataChannelState) {
+  mockDataState = state;
+  const user = userEvent.setup();
+  render(<HomePage />);
+  await user.click(screen.getByRole("button", { name: "Start session" }));
+  await screen.findByText(/^Live/);
 }
 
-describe("Dashboard", () => {
-  it("shows idle state when botState is null", () => {
-    const { container } = render(
-      <Dashboard botState={null} latencyMs={null} interruptions={[]} />,
+describe("HomePage session dashboard", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockDataState = {
+      botState: null,
+      latencyMs: null,
+      interruptions: [],
+      sessionEndedReason: null,
+    };
+  });
+
+  it.each(["LISTENING", "THINKING", "SPEAKING"] as const)(
+    "renders the %s state from the production dashboard",
+    async (botState) => {
+      await renderConnectedDashboard({
+        ...mockDataState,
+        botState,
+      });
+
+      expect(screen.getByLabelText(`Bot state: ${botState}`)).toHaveAttribute(
+        "data-state",
+        botState,
+      );
+    },
+  );
+
+  it("renders the idle dashboard state before the first event", async () => {
+    await renderConnectedDashboard(mockDataState);
+
+    expect(screen.getByLabelText("Bot state: idle")).toHaveAttribute(
+      "data-state",
+      "idle",
     );
-    expect(screen.getByRole("region", { name: "Session dashboard" })).toBeInTheDocument();
-    const span = container.querySelector("[data-state='idle']");
-    expect(span).toBeInTheDocument();
-    expect(span).toHaveTextContent("—");
+    expect(screen.getByText("Round-trip latency").parentElement).toHaveTextContent("—");
   });
 
-  it("renders LISTENING state with correct data-state", () => {
-    render(<Dashboard botState="LISTENING" latencyMs={null} interruptions={[]} />);
-    const span = screen.getByText("LISTENING");
-    expect(span).toHaveAttribute("data-state", "LISTENING");
+  it("rounds latency and renders interruption entries", async () => {
+    await renderConnectedDashboard({
+      botState: "LISTENING",
+      latencyMs: 183.7,
+      interruptions: [{ at: 1234.5 }, { at: 5678.9 }],
+      sessionEndedReason: null,
+    });
+
+    expect(screen.getByText("184").parentElement).toHaveTextContent("184ms");
+    expect(screen.getByText("Interruptions").parentElement).toHaveTextContent(
+      "Interruptions2",
+    );
+    expect(screen.getByText("1235 ms into session")).toBeInTheDocument();
+    expect(screen.getByText("5679 ms into session")).toBeInTheDocument();
   });
 
-  it("renders THINKING state with correct data-state", () => {
-    render(<Dashboard botState="THINKING" latencyMs={null} interruptions={[]} />);
-    const span = screen.getByText("THINKING");
-    expect(span).toHaveAttribute("data-state", "THINKING");
-  });
+  it("does not render an interruption list when there are no events", async () => {
+    await renderConnectedDashboard({
+      ...mockDataState,
+      botState: "LISTENING",
+    });
 
-  it("renders SPEAKING state with correct data-state", () => {
-    render(<Dashboard botState="SPEAKING" latencyMs={null} interruptions={[]} />);
-    const span = screen.getByText("SPEAKING");
-    expect(span).toHaveAttribute("data-state", "SPEAKING");
-  });
-
-  it("shows — for latency when null", () => {
-    render(<Dashboard botState={null} latencyMs={null} interruptions={[]} />);
-    expect(screen.getByText(/Latency:/).textContent).toContain("—");
-  });
-
-  it("formats latency as rounded ms", () => {
-    render(<Dashboard botState={null} latencyMs={250.4} interruptions={[]} />);
-    expect(screen.getByText(/Latency:/).textContent).toContain("250 ms");
-  });
-
-  it("rounds latency value", () => {
-    render(<Dashboard botState={null} latencyMs={183.7} interruptions={[]} />);
-    expect(screen.getByText(/Latency:/).textContent).toContain("184 ms");
-  });
-
-  it("does not show interruption list when empty", () => {
-    render(<Dashboard botState={null} latencyMs={null} interruptions={[]} />);
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
-  });
-
-  it("shows interruption summary with count", () => {
-    const interruptions = [{ at: 1000 }, { at: 2000 }];
-    render(<Dashboard botState={null} latencyMs={null} interruptions={interruptions} />);
-    expect(screen.getByText("Interruptions (2)")).toBeInTheDocument();
-  });
-
-  it("lists each interruption entry as rounded ms", () => {
-    const interruptions = [{ at: 1234.5 }, { at: 5678.9 }];
-    render(<Dashboard botState={null} latencyMs={null} interruptions={interruptions} />);
-    expect(screen.getByText("1235 ms")).toBeInTheDocument();
-    expect(screen.getByText("5679 ms")).toBeInTheDocument();
   });
 });

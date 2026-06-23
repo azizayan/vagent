@@ -54,7 +54,8 @@ class SlidingWindowLimiter:
                 retry_after=round(retry_after, 2),
             )
             raise RateLimitError(
-                f"Too many session requests. Try again in {retry_after:.1f}s."
+                f"Too many session requests. Try again in {retry_after:.1f}s.",
+                retry_after_seconds=retry_after,
             )
         bucket.append(timestamp)
 

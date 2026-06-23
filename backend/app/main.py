@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -40,9 +41,38 @@ def register_exception_handlers(app: FastAPI) -> None:
             message=str(exc),
             path=request.url.path,
         )
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """Convert FastAPI's verbose Pydantic errors to our `{error, message, fields}`
+        shape so the frontend has one error contract and can display per-field hints.
+        """
+        fields: dict[str, str] = {}
+        for err in exc.errors():
+            path = ".".join(str(part) for part in err.get("loc", ()) if part != "body")
+            if not path:
+                path = "request"
+            # Keep only the first error per field — extra ones are usually noise
+            # from cascading validators.
+            fields.setdefault(path, err.get("msg", "invalid value"))
+
+        # Build a short human summary: "tts_voice_id: required; max_tokens: must be ≤ 4096"
+        summary = "; ".join(f"{name}: {msg}" for name, msg in fields.items())
+        get_logger(__name__).info(
+            "request.validation_failed",
+            path=request.url.path,
+            fields=fields,
+        )
         return JSONResponse(
-            status_code=exc.status_code,
-            content={"error": type(exc).__name__, "message": str(exc)},
+            status_code=422,
+            content={
+                "error": "ValidationError",
+                "message": summary or "Request body failed validation.",
+                "fields": fields,
+            },
         )
 
 

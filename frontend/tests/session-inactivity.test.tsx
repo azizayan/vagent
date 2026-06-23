@@ -37,9 +37,24 @@ jest.mock("../hooks/useDataChannel", () => ({
   },
 }));
 
-jest.mock("../lib/api", () => ({
-  api: { post: jest.fn() },
-}));
+jest.mock("../lib/api", () => {
+  class ApiError extends Error {
+    public readonly fields: Record<string, string> | null = null;
+    public readonly retryAfterSeconds: number | null = null;
+    constructor(
+      public readonly status: number,
+      public readonly body: unknown,
+      message: string,
+    ) {
+      super(message);
+      this.name = "ApiError";
+    }
+  }
+  return {
+    api: { post: jest.fn() },
+    ApiError,
+  };
+});
 
 jest.mock("@tanstack/react-query", () => ({
   useMutation: (options: {
