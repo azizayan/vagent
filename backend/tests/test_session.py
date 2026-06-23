@@ -126,5 +126,29 @@ async def test_daily_service_creates_private_room_and_separate_tokens() -> None:
     assert b'"privacy":"private"' in requests[0].content
 
 
+@pytest.mark.asyncio
+async def test_daily_service_retries_server_errors_then_raises_domain_error() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503, json={"error": "temporarily unavailable"})
+
+    client = httpx.AsyncClient(
+        base_url="https://api.daily.co/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    service = DailyService(settings=Settings(), client=client)
+
+    from app.core.errors import UpstreamServiceError
+
+    with pytest.raises(UpstreamServiceError, match="after retries"):
+        await service.create_session("abc")
+
+    assert attempts == 3
+    await client.aclose()
+
+
 async def _async_none() -> None:
     return None

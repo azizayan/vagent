@@ -19,13 +19,29 @@ conventions, and [`DEPLOY.md`](./DEPLOY.md) for the EC2 deployment runbook.
 
 ## Local quickstart
 
+The application cannot have a functional voice session without vendor credentials.
+Provisioning `.env` is therefore the one required precondition to the PDF's clean-box
+`docker compose up -d` command:
+
 ```bash
 git clone <repo>
 cd voice_agent
-cp .env.example .env       # fill in API keys
+cp .env.example .env
+$EDITOR .env               # fill in OpenAI, Deepgram, Cartesia, and Daily keys
 docker compose up -d --build
 open http://localhost:3000
 ```
+
+After `.env` has been provisioned on an EC2 host, every later boot or deployment is
+one command:
+
+```bash
+docker compose up -d
+```
+
+Secrets cannot be included in the repository to make the unmodified three-part
+`git clone && cd && docker compose up -d` command sufficient. The source checkout
+and Compose file need no other modification.
 
 The frontend runs in production mode (`next build && next start`) — the same
 mode that ships to EC2. There is intentionally no `docker-compose.dev.yml`.

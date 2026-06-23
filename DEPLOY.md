@@ -54,6 +54,10 @@ Cloudflare Tunnel HTTPS URL, never the raw EC2 IP.
 
 ## Environment
 
+The PDF's clean-box command assumes secrets have already been provisioned. Vendor
+credentials cannot safely live in Git, so a brand-new EC2 host needs this one-time
+secret step:
+
 1. SSH into the box.
 2. `git clone <repo> && cd <repo>`
 3. `cp .env.example .env`
@@ -63,6 +67,14 @@ Cloudflare Tunnel HTTPS URL, never the raw EC2 IP.
 7. Start the Cloudflare Tunnel pointing at `http://localhost:3000`.
 
 The production `.env` lives **only** on the EC2 box. It is never committed.
+Once it exists, the requested operational command is exactly:
+
+```bash
+git pull && docker compose up -d
+```
+
+No Compose override, source edit, package installation, or manual worker startup is
+required.
 
 ## Logs
 
