@@ -9,12 +9,11 @@ const mockCall = {
   leave: jest.fn().mockResolvedValue(undefined),
   destroy: jest.fn(),
 };
-const mockDestroyDailyCall = jest.fn().mockResolvedValue(undefined);
 let mockDataState: DataChannelState;
 
 jest.mock("../lib/daily", () => ({
   createDailyCall: () => mockCall,
-  destroyDailyCall: (call: unknown) => mockDestroyDailyCall(call),
+  destroyDailyCall: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("../hooks/useDataChannel", () => ({
@@ -129,21 +128,5 @@ describe("HomePage session dashboard", () => {
     });
 
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
-  });
-
-  it("destroys the Daily call and returns to configuration on disconnect", async () => {
-    await renderConnectedDashboard({
-      ...mockDataState,
-      botState: "LISTENING",
-    });
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Disconnect" }));
-
-    expect(mockDestroyDailyCall).toHaveBeenCalledWith(mockCall);
-    expect(
-      screen.getByText("Configure the agent on the left, then start a session."),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
   });
 });

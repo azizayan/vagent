@@ -49,6 +49,22 @@ mode that ships to EC2. There is intentionally no `docker-compose.dev.yml`.
 Health checks: `curl http://localhost:3000/api/health` (proxied through the
 Next.js rewrite to the backend container).
 
+## Demo verification
+
+After pulling changes on EC2, rebuild both app containers so the browser is not
+served an old Next.js bundle:
+
+```bash
+docker compose up -d --build --force-recreate backend frontend
+docker compose logs -f backend frontend
+```
+
+When a session starts successfully, backend logs should show Daily room creation
+with `200 OK`, `POST /session` with `201 Created`, a `bot.starting` config log,
+and `Joined https://...daily.co/...`. Test the browser through the HTTPS
+Cloudflare URL, not the raw EC2 HTTP address, because microphone capture requires
+a secure origin.
+
 ## Layout
 
 ```

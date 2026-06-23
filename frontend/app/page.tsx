@@ -28,14 +28,6 @@ const defaultConfig: SessionConfig = {
   interruptibility_pct: 50,
 };
 
-const interruptibilityLabel = (percentage: number): string => {
-  if (percentage === 0) return "Disabled";
-  if (percentage <= 30) return "Conservative";
-  if (percentage <= 50) return "Balanced";
-  if (percentage <= 75) return "Responsive";
-  return "Immediate";
-};
-
 export default function HomePage() {
   const [call, setCall] = useState<DailyCall | null>(null);
   const [config, setConfig] = useState<SessionConfig>(defaultConfig);
@@ -168,7 +160,7 @@ export default function HomePage() {
         <aside className="panel-config">
           <div className="field">
             <label className="field-label" htmlFor="system_prompt">
-              Personality / System Prompt
+              System prompt
             </label>
             <textarea
               id="system_prompt"
@@ -185,9 +177,6 @@ export default function HomePage() {
                 setConfig((c) => ({ ...c, system_prompt: e.target.value }))
               }
             />
-            <p className="field-help">
-              Defines Freya&apos;s identity, tone, boundaries, and response style.
-            </p>
             {fieldError("system_prompt")}
           </div>
 
@@ -240,10 +229,6 @@ export default function HomePage() {
                 value={config.stt_temperature}
                 onChange={(e) => setNum("stt_temperature", e.target.value)}
               />
-              <p className="field-help">
-                Deepgram streaming does not expose temperature. This value is
-                validated and logged for contract traceability, but is not applied.
-              </p>
               {fieldError("stt_temperature")}
             </div>
             <div className="field">
@@ -261,9 +246,6 @@ export default function HomePage() {
                 value={config.tts_temperature}
                 onChange={(e) => setNum("tts_temperature", e.target.value)}
               />
-              <p className="field-help">
-                Mapped to Cartesia voice emotion: neutral, default, or excited.
-              </p>
               {fieldError("tts_temperature")}
             </div>
             <div className="field">
@@ -308,8 +290,7 @@ export default function HomePage() {
 
           <div className="field">
             <label className="field-label" htmlFor="interruptibility_pct">
-              Interruptibility: {config.interruptibility_pct}% ·{" "}
-              {interruptibilityLabel(config.interruptibility_pct)}
+              Interruptibility: {config.interruptibility_pct}%
             </label>
             <input
               id="interruptibility_pct"
@@ -321,10 +302,6 @@ export default function HomePage() {
               value={config.interruptibility_pct}
               onChange={(e) => setNum("interruptibility_pct", e.target.value)}
             />
-            <p className="field-help">
-              Controls how much speech is required to interrupt Freya. Zero disables
-              barge-in; higher values react to fewer, quieter words.
-            </p>
             {fieldError("interruptibility_pct")}
           </div>
 
