@@ -65,15 +65,70 @@ and `Joined https://...daily.co/...`. Test the browser through the HTTPS
 Cloudflare URL, not the raw EC2 HTTP address, because microphone capture requires
 a secure origin.
 
-## Layout
+## Repository structure
 
 ```
-frontend/              Next.js App Router (standalone build)
-backend/               FastAPI + Pipecat
-docker-compose.yml     Single file used locally and on EC2
-.env.example           Required environment variables
-DEPLOY.md              EC2 + Cloudflare Tunnel runbook
+backend/
+├── app/
+│   ├── main.py                  FastAPI entrypoint, lifespan wires HelpCenterService + AgentRunner + DailyService
+│   ├── bot.py                   run_bot() builds the full Pipecat pipeline per session
+│   ├── api/
+│   │   ├── health.py            GET /health
+│   │   └── session.py           POST /session — creates a Daily room, returns token, spawns the bot task
+│   ├── core/
+│   │   ├── settings.py          pydantic-settings, single source of truth for env
+│   │   ├── logging.py           structlog JSON setup
+│   │   └── errors.py            Domain exceptions mapped to HTTP responses
+│   ├── schemas/
+│   │   ├── config.py            SessionConfig (frontend → backend contract)
+│   │   └── events.py            DataChannelEvent union (backend → frontend over Daily)
+│   ├── services/
+│   │   ├── daily.py             Daily REST client (httpx.AsyncClient + tenacity retries)
+│   │   ├── agent_runner.py      Tracks per-session asyncio tasks
+│   │   └── help_center.py       Qdrant + OpenAI embeddings (RAG add-on)
+│   ├── data/
+│   │   └── help_center.json     Seed Q&A entries for the help-center collection
+│   └── pipeline/
+│       ├── idle_session.py      Reminder prompt + graceful shutdown on user inactivity
+│       ├── prompts.py           Default system prompt + resolver
+│       ├── vad.py               Maps interruptibility % → Silero VADParams
+│       └── processors/
+│           ├── state_tracker.py         FSM emitting state + latency events
+│           ├── output_guard.py          LLMOutputGuard between LLM and TTS
+│           ├── help_center_retriever.py k=3 Qdrant lookup, fail-open
+│           └── data_channel_sender.py   Serialises events onto the Daily data channel
+└── tests/                       Pytest suite (VAD, FSM, latency, interruption, RAG, idle, output guard…)
+
+frontend/
+├── app/                         Next.js App Router (page.tsx is the single dashboard)
+├── components/config/           Config form (voice picker, sliders, prompt area)
+├── hooks/useDataChannel.ts      Daily app-message subscriber + reducer driving the dashboard
+├── lib/                         api / daily / env wrappers (no bare process.env in components)
+├── types/contract.ts            Mirrors backend schemas — must stay in sync
+└── tests/                       Jest (reducer, dashboard, config form, inactivity notice)
+
+docker-compose.yml               Single file used both locally and on EC2
+.env.example                     Required environment variables
+DEPLOY.md                        EC2 + Cloudflare Tunnel runbook
+CLAUDE.md                        Architecture + code conventions
 ```
+
+## Add-ons implemented
+
+The PDF lists two optional add-ons; this submission ships the first one:
+
+- **Help-center RAG (Qdrant)** — a third Compose service (`qdrant:v1.14.1`) runs
+  internally on the Docker network. On startup the backend embeds
+  `backend/app/data/help_center.json` with `text-embedding-3-small` and seeds
+  the `freya_help_center` collection (idempotent — subsequent boots log
+  `help_center.seed_already_present`). A `HelpCenterRetriever` processor sits
+  between the user aggregator and the LLM, runs `k=3` retrieval on each user
+  turn, and inserts the retrieved snippets into a cloned `LLMContextFrame`
+  *before* the latest user message so shared conversation history is never
+  mutated. Retrieval failures are fail-open: the original context still
+  reaches the LLM. To verify in a session, ask the bot a question whose answer
+  is planted in `help_center.json` (e.g. "what is the return window?" — the
+  seeded fact is 37 days).
 
 ## Features
 
