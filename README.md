@@ -43,11 +43,32 @@ docker-compose.yml     Single file used locally and on EC2
 DEPLOY.md              EC2 + Cloudflare Tunnel runbook
 ```
 
-## Phase status
+## Features
 
-- [x] Phase 1 — repo + compose scaffold (this commit)
-- [ ] Phase 2 — Pipecat pipeline, session API, state/latency processors
-- [ ] Phase 3 — Next.js config UI + live dashboard
-- [ ] Phase 4 — Add-on (Qdrant RAG or OpenTelemetry)
-- [ ] Phase 5 — Security pass
-- [ ] Phase 6 — EC2 deployment + tunnel
+- Configurable system prompt, LLM temperature / max-tokens, TTS voice / speed /
+  temperature, STT temperature (accepted for contract parity; see note below),
+  and an **interruptibility percentage** that maps to concrete Silero VAD
+  parameters in `backend/app/pipeline/vad.py`.
+- Real-time **bot state** dashboard (LISTENING / THINKING / SPEAKING) and
+  **round-trip latency** measured from end-of-user-speech to first bot audio.
+- **Mid-thinking interruption**: the user can cut the bot off while the LLM is
+  still generating, not just while audio is playing.
+- **Qdrant help-center RAG** add-on with `text-embedding-3-small` and a
+  fail-open retriever that enriches the LLM context without mutating the
+  shared conversation history.
+- Per-IP rate limiting on `POST /session`, structured JSON logs with
+  `session_id` binding, tenacity retries on Daily REST calls, and an
+  `LLMOutputGuard` between OpenAI and Cartesia.
+- Single `docker-compose.yml` used locally and on EC2 — frontend runs in
+  production mode (`output: standalone`), backend is internal-only, and the
+  browser reaches it via a same-origin `/api` rewrite so only one port is
+  tunneled.
+
+### Note on temperatures
+
+`tts_temperature` maps to Cartesia Sonic-3's `emotion` field
+(`< 0.34` → "neutral", `> 0.66` → "excited", middle band → Cartesia default)
+because Sonic-3 dropped the raw temperature parameter from its API.
+`stt_temperature` is validated and logged but **not applied** — Deepgram's
+streaming STT API has no temperature parameter to wire it to. Both fields
+remain in the `SessionConfig` contract for forward compatibility.

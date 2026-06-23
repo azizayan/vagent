@@ -3,19 +3,16 @@
 One-page production runbook. The stack uses a single `docker-compose.yml` that
 boots identically on a laptop and on EC2.
 
-> Phase-1 scaffold note: the live deployment is finalized in Phase 6.
-> Section TODOs below mark fields that must be filled before submission.
-
 ## Target
 
 | Field          | Value                                                  |
 | -------------- | ------------------------------------------------------ |
-| AWS Region     | _TODO (e.g. `us-east-1`)_                              |
+| AWS Region     | `us-east-1`                                            |
 | AMI            | Ubuntu Server 22.04 LTS (x86_64)                       |
 | Instance Type  | `t3.medium`                                            |
 | Disk           | 16 GB gp3                                              |
 | SSH user       | `ubuntu`                                               |
-| Public host    | _TODO — Cloudflare Tunnel hostname_                    |
+| Public host    | Cloudflare Tunnel — set after `cloudflared` provisions a hostname for `localhost:3000`. Record the issued `*.trycloudflare.com` URL (or your custom tunnel hostname) in the submission. |
 
 ## Security group (inbound)
 
@@ -93,8 +90,41 @@ docker compose up -d
 To rebuild after pulling code changes:
 
 ```bash
+cd ~/voice_agent     # adjust if the repo was cloned under a different name
 git pull
 docker compose up -d --build
+```
+
+## Cloudflare Tunnel (HTTPS exposure)
+
+Quick (ephemeral) tunnel — fine for the take-home review window:
+
+```bash
+sudo apt-get install -y cloudflared
+cloudflared tunnel --url http://localhost:3000
+```
+
+`cloudflared` prints the assigned `*.trycloudflare.com` URL on stdout. Keep
+the process alive with `tmux` / `systemd` so the URL stays reachable for ≥48h:
+
+```bash
+sudo tee /etc/systemd/system/freya-tunnel.service >/dev/null <<'UNIT'
+[Unit]
+Description=Cloudflare Tunnel for Freya
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:3000 --no-autoupdate
+Restart=on-failure
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload
+sudo systemctl enable --now freya-tunnel
+journalctl -u freya-tunnel -f      # grab the published URL from the logs
 ```
 
 ## Troubleshooting

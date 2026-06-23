@@ -28,6 +28,7 @@ from app.pipeline.processors.help_center_retriever import HelpCenterRetriever
 from app.pipeline.processors.output_guard import LLMOutputGuard
 from app.pipeline.processors.state_tracker import StateTracker
 from app.pipeline.prompts import resolve_system_prompt
+from app.pipeline.tts_emotion import temperature_to_emotion
 from app.pipeline.vad import map_interruptibility
 from app.schemas.config import SessionConfig
 from app.services.help_center import HelpCenterService
@@ -59,22 +60,25 @@ async def run_bot(
     settings = settings or get_settings()
     bind_contextvars(session_id=session_id)
     system_prompt, used_default = resolve_system_prompt(config.system_prompt)
+    tts_emotion = temperature_to_emotion(config.tts_temperature)
     logger.info(
         "bot.starting",
         room_url=room_url,
         system_prompt_used_default=used_default,
         system_prompt_length=len(system_prompt),
         system_prompt_preview=system_prompt[:120],
-        temperature=config.temperature,
-        max_tokens=config.max_tokens,
+        llm_temperature=config.temperature,
+        llm_max_tokens=config.max_tokens,
         tts_voice=config.tts_voice_id,
         tts_speed=config.tts_speed,
+        tts_temperature=config.tts_temperature,
+        tts_emotion_applied=tts_emotion,
+        # Deepgram streaming STT has no temperature parameter in its API. We
+        # surface the user's value here for traceability — it is intentionally
+        # not forwarded to Deepgram, where it would be silently dropped.
+        stt_temperature=config.stt_temperature,
+        stt_temperature_applied=False,
         interruptibility_pct=config.interruptibility_pct,
-        # stt_temperature and tts_temperature are in the contract but have no
-        # corresponding parameter in DeepgramSTTService or CartesiaTTSService
-        # in Pipecat 1.0.0 — logged here to confirm receipt, not applied.
-        stt_temperature_received=config.stt_temperature,
-        tts_temperature_received=config.tts_temperature,
     )
     session_start = time.monotonic()
 
@@ -103,7 +107,10 @@ async def run_bot(
         api_key=_secret(settings, "CARTESIA_API_KEY"),
         settings=CartesiaTTSService.Settings(
             voice=config.tts_voice_id,
-            generation_config=GenerationConfig(speed=config.tts_speed),
+            generation_config=GenerationConfig(
+                speed=config.tts_speed,
+                emotion=tts_emotion,
+            ),
         ),
     )
 

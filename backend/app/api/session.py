@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
+from app.api.rate_limit import enforce_session_rate_limit
 from app.schemas.config import SessionConfig, SessionResponse
 from app.services.agent_runner import AgentRunner
 from app.services.daily import DailyService
@@ -12,7 +13,12 @@ from app.services.daily import DailyService
 router = APIRouter(tags=["session"])
 
 
-@router.post("/session", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/session",
+    response_model=SessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(enforce_session_rate_limit)],
+)
 async def create_session(config: SessionConfig, request: Request) -> SessionResponse:
     session_id = uuid4().hex
     bind_contextvars(session_id=session_id)

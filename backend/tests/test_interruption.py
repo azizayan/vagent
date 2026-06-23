@@ -13,7 +13,7 @@ from pipecat.processors.frame_processor import FrameDirection
 
 from app.pipeline.processors import state_tracker as st_module
 from app.pipeline.processors.state_tracker import StateTracker
-from app.schemas.events import InterruptionEvent, StateEvent
+from app.schemas.events import InterruptionEvent, LatencyEvent, StateEvent
 
 
 def _tracker_in_speaking_state(events: list, monkeypatch: pytest.MonkeyPatch) -> StateTracker:
@@ -86,7 +86,9 @@ async def test_no_interruption_while_listening(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_no_interruption_while_thinking(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_interruption_while_thinking_emits_one_interruption_then_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     events: list = []
     tracker = _tracker_in_speaking_state(events, monkeypatch)
 
@@ -96,7 +98,35 @@ async def test_no_interruption_while_thinking(monkeypatch: pytest.MonkeyPatch) -
 
     await tracker.process_frame(UserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
 
-    assert not any(isinstance(e, InterruptionEvent) for e in events)
+    interruption_events = [e for e in events if isinstance(e, InterruptionEvent)]
+    state_events = [e for e in events if isinstance(e, StateEvent)]
+
+    assert len(interruption_events) == 1
+    assert len(state_events) == 1
+    assert state_events[0].state == "LISTENING"
+    assert events.index(interruption_events[0]) < events.index(state_events[0])
+    tracker.push_frame.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_interruption_while_thinking_clears_latency_timer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After a THINKING interruption, a stray BotStartedSpeakingFrame must not
+    emit a LatencyEvent measured against the abandoned turn."""
+    events: list = []
+    tracker = _tracker_in_speaking_state(events, monkeypatch)
+
+    # Drive to THINKING, then interrupt
+    await tracker.process_frame(UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+    await tracker.process_frame(UserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+    events.clear()
+
+    # If a late BotStartedSpeakingFrame leaks through from the cancelled LLM,
+    # no LatencyEvent must be emitted (timer was abandoned).
+    await tracker.process_frame(BotStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+
+    assert not any(isinstance(e, LatencyEvent) for e in events)
 
 
 @pytest.mark.asyncio

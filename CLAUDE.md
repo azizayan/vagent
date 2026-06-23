@@ -6,90 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Real-time, interruptible voice agent. Browser captures mic → Daily WebRTC → Pipecat pipeline (VAD → Deepgram STT → OpenAI LLM → Cartesia TTS) → Daily WebRTC → browser speaker. The UI configures the agent before each session and displays live bot state, round-trip latency, and interruption events streamed back over a Daily data channel.
 
-This codebase is being built from scratch. Treat the structure below as the target architecture — implement it as you go; do not retrofit a different layout.
-
----
-
-## Repository Layout
-
-```
-/
-├── frontend/                    # Next.js App Router (TypeScript)
-├── backend/                     # Python + Pipecat
-├── docker-compose.yml           # Single file — identical local and EC2
-├── .env.example                 # All required vars, no secrets
-├── DEPLOY.md                    # One-page deployment guide
-└── README.md                    # Top-level overview + quickstart
-```
-
-### Backend layout (`backend/`)
-
-```
-backend/
-├── app/
-│   ├── main.py                  # FastAPI entrypoint, lifespan, route mounting
-│   ├── core/
-│   │   ├── settings.py          # pydantic-settings: env-driven config
-│   │   ├── logging.py           # structlog / JSON logging setup
-│   │   └── errors.py            # exception types + handlers
-│   ├── api/
-│   │   ├── health.py            # GET /health
-│   │   └── session.py           # POST /session → Daily room + token + agent spawn
-│   ├── schemas/
-│   │   ├── config.py            # SessionConfig (LLM/STT/TTS/interruptibility)
-│   │   └── events.py            # DataChannelEvent union (state/latency/interruption)
-│   ├── services/
-│   │   ├── daily.py             # Daily REST client (rooms, tokens)
-│   │   └── agent_runner.py      # spawn/track Pipecat agent processes/tasks
-│   └── pipeline/
-│       ├── factory.py           # build_pipeline(config) → Pipeline
-│       ├── vad.py               # interruptibility% → VAD params mapping
-│       ├── processors/
-│       │   ├── state_tracker.py        # LISTENING/THINKING/SPEAKING FSM
-│       │   ├── latency_tracker.py      # VAD-stop → first bot audio (ms)
-│       │   ├── interruption_detector.py
-│       │   └── data_channel_sender.py  # serialize events → Daily data channel
-│       └── prompts.py           # default system prompt, sanitization
-├── tests/
-│   ├── test_config_injection.py
-│   ├── test_vad_mapping.py
-│   ├── test_state_transitions.py
-│   ├── test_latency.py
-│   └── test_interruption.py
-├── pyproject.toml               # uv or poetry; pinned versions
-├── Dockerfile
-└── .dockerignore
-```
-
-### Frontend layout (`frontend/`)
-
-```
-frontend/
-├── app/
-│   ├── layout.tsx
-│   ├── page.tsx                 # Config form + "Start session" CTA
-│   └── session/[id]/page.tsx    # Live voice + dashboard
-├── components/
-│   ├── config/                  # SystemPromptTextarea, SliderField, VoicePicker
-│   ├── voice/                   # DailyProvider, AudioStage, MicButton
-│   └── dashboard/               # BotStateBadge, LatencyMeter, InterruptionLog
-├── hooks/
-│   ├── useDailyCall.ts          # join/leave, track state
-│   ├── useDataChannel.ts        # subscribe to backend events, expose typed state
-│   └── useSessionConfig.ts      # form state + zod validation
-├── lib/
-│   ├── api.ts                   # typed fetch wrapper around NEXT_PUBLIC_API_URL
-│   ├── daily.ts                 # Daily.js thin wrapper
-│   └── env.ts                   # client-side env access, throws on missing
-├── types/
-│   └── contract.ts              # mirrors backend schemas (kept in sync manually)
-├── tests/                       # Vitest + React Testing Library
-├── next.config.ts
-├── tsconfig.json
-├── package.json
-└── Dockerfile
-```
-
 ---
 
 ## Commands
@@ -105,12 +21,12 @@ docker compose down              # Stop
 ### Backend
 ```bash
 cd backend
-uv sync                                 # or: pip install -e .
+uv sync
 uv run uvicorn app.main:app --reload    # Dev
 uv run pytest                           # All tests
-uv run pytest tests/test_latency.py -k "vad_stop"   # Single test
-uv run ruff check . && uv run ruff format --check . # Lint + format
-uv run mypy app                         # Type-check
+uv run pytest tests/test_vad_mapping.py # Single test file
+uv run ruff check . && uv run ruff format --check .
+uv run mypy app
 ```
 
 ### Frontend
@@ -119,147 +35,214 @@ cd frontend
 npm ci
 npm run dev          # Local only
 npm run build        # Required before `npm start`
-npm start            # Production server (this is what Docker runs)
-npm test             # Vitest
+npm start            # Production server (what Docker runs)
+npm test             # Jest
 npm run lint
 npm run typecheck    # tsc --noEmit
 ```
 
 ---
 
+## Actual Repository Layout
+
+```
+backend/
+├── app/
+│   ├── main.py                  # FastAPI entrypoint with lifespan (HelpCenterService, AgentRunner, DailyService)
+│   ├── bot.py                   # run_bot() — builds and runs the full Pipecat pipeline
+│   ├── core/
+│   │   ├── settings.py          # pydantic-settings; credentials are optional at load, use settings.require(name) to fail fast
+│   │   ├── logging.py
+│   │   └── errors.py            # FreyaError, ConfigError — mapped to HTTP by one exception handler in main.py
+│   ├── api/
+│   │   ├── health.py            # GET /health
+│   │   └── session.py           # POST /session → Daily room + token + bot task spawn
+│   ├── schemas/
+│   │   ├── config.py            # SessionConfig (Pydantic v2) + SessionResponse
+│   │   └── events.py            # DataChannelEvent discriminated union (state|latency|interruption|session_ended)
+│   ├── services/
+│   │   ├── daily.py             # Daily REST client (httpx.AsyncClient)
+│   │   ├── agent_runner.py      # spawn/track asyncio tasks for bot sessions
+│   │   └── help_center.py       # Qdrant + OpenAI embeddings (text-embedding-3-small)
+│   ├── data/
+│   │   └── help_center.json     # 18 fake Q&A entries; planted fact: return window is 37 days
+│   └── pipeline/
+│       ├── idle_session.py      # IdleSessionCoordinator: one reminder → graceful shutdown
+│       ├── prompts.py           # DEFAULT_SYSTEM_PROMPT + resolve_system_prompt(raw) → (str, bool)
+│       ├── vad.py               # map_interruptibility(pct) → dict[str, float] for VADParams
+│       └── processors/
+│           ├── state_tracker.py         # FSM + latency timer; emits all bot-state + latency events
+│           ├── output_guard.py          # LLMOutputGuard between LLM and TTS; rejects bad responses
+│           ├── help_center_retriever.py # Qdrant k=3 lookup; inserts context before user message
+│           └── data_channel_sender.py   # serialises events → DailyOutputTransportMessageUrgentFrame
+```
+
+```
+frontend/
+├── app/
+│   ├── page.tsx                 # Single page: two-panel layout (config left, live dashboard right)
+│   ├── layout.tsx
+│   ├── globals.css
+│   └── providers.tsx            # QueryClientProvider
+├── components/config/
+│   └── VoicePicker.tsx          # 5 preset Cartesia voices + required custom voice ID input
+├── hooks/
+│   └── useDataChannel.ts        # Daily app-message subscriber; reducer drives dashboard state
+├── lib/
+│   ├── api.ts                   # typed fetch wrapper (reads NEXT_PUBLIC_API_URL)
+│   ├── daily.ts                 # createDailyCall / destroyDailyCall wrappers
+│   ├── defaults.ts              # DEFAULT_SYSTEM_PROMPT (mirrors backend prompts.py)
+│   └── env.ts                   # validates NEXT_PUBLIC_API_URL at module load
+└── types/
+    └── contract.ts              # mirrors backend schemas (keep in sync with events.py and config.py)
+```
+
+---
+
 ## Architecture
 
-### Pipeline
+### Pipeline order (in `bot.py`)
 ```
-Daily transport → VAD → Deepgram STT → OpenAI LLM → Cartesia TTS → Daily transport
-                  └────── observed by: StateTracker, LatencyTracker, InterruptionDetector ──┘
-                                              │
-                                              └→ DataChannelSender → Daily data channel
+transport.input() → StateTracker → STT → user_aggregator →
+HelpCenterRetriever → LLM → LLMOutputGuard → TTS →
+DataChannelSender → transport.output() → assistant_aggregator
 ```
 
-### HTTP contract
-- `GET /health` — liveness; returns `{status, version}`. Cheap, no upstream calls.
-- `POST /session` — body is `SessionConfig`; returns `{roomUrl, token, sessionId}`. Side effect: spawns a Pipecat agent bound to that room.
+- `StateTracker` must be first after transport.input() to observe all frames (including VAD frames).
+- `DataChannelSender` must be upstream of `transport.output()` so it can push `DailyOutputTransportMessageUrgentFrame` downstream.
+- `LLMOutputGuard` blocks control characters, code tokens, excessive length (>800 chars) — replaced with safe fallback, logged as `llm.output_rejected`.
 
-The frontend **never** speaks to OpenAI/Deepgram/Cartesia directly. All third-party credentials live in the backend only.
+### HTTP / proxy contract
+- Browser calls `/api/*` (same-origin). Next.js rewrites `/api/:path*` → `http://backend:8000/:path*` using `BACKEND_INTERNAL_URL` env var.
+- `NEXT_PUBLIC_API_URL` defaults to `/api` and is baked at `next build` time. Rebuild the frontend image after changing it.
+- `POST /session` body is `SessionConfig`; returns `{roomUrl, token, sessionId}`.
 
-### Data channel contract (Daily)
-The backend pushes typed JSON messages. Mirror the discriminated union in both `app/schemas/events.py` and `types/contract.ts`:
-```ts
+### Data channel contract
+Backend → frontend only (read-only from browser). Defined in `app/schemas/events.py` and **must be kept in sync** with `frontend/types/contract.ts`:
+```typescript
 type DataChannelEvent =
-  | { type: "state"; state: "LISTENING" | "THINKING" | "SPEAKING"; at: number }
-  | { type: "latency"; ms: number; at: number }
-  | { type: "interruption"; at: number };
+  | { type: "state";         state: "LISTENING" | "THINKING" | "SPEAKING"; at: number }
+  | { type: "latency";       ms: number; at: number }
+  | { type: "interruption";  at: number }
+  | { type: "session_ended"; reason: "inactivity"; at: number }
 ```
-`at` is `performance.now()`-style ms since session start, set by the backend. Keep the channel write-only from backend → frontend.
+`at` is ms since session start (monotonic clock on backend). Daily delivers these as `app-message` events. Daily's own RTVI metrics frames (`type: "metrics"`) are filtered by the `KNOWN_TYPES` set in `useDataChannel.ts`.
 
-### Bot state machine
-THINKING is **not** a native Pipecat state. Implement it explicitly:
-- `UserStoppedSpeakingFrame` → emit `THINKING` (start latency timer).
-- First `BotStartedSpeakingFrame` after that → emit `SPEAKING` (stop latency timer, send `latency` event).
-- `BotStoppedSpeakingFrame` → emit `LISTENING`.
-- `UserStartedSpeakingFrame` while `SPEAKING` → emit `interruption` event, then `LISTENING`.
+### Bot state machine (in `state_tracker.py`)
+- `UserStoppedSpeakingFrame` → emit THINKING, start latency timer
+- First `BotStartedSpeakingFrame` after THINKING → emit SPEAKING, stop timer, emit latency event
+- `BotStoppedSpeakingFrame` → emit LISTENING
+- `UserStartedSpeakingFrame` while SPEAKING → emit interruption event, then LISTENING
 
-The latency anchors (`UserStoppedSpeakingFrame` → first `BotStartedSpeakingFrame`) are the same anchors as start-of-THINKING / end-of-THINKING. Use one shared clock — do not measure them twice.
+### Inactivity handling (`pipeline/idle_session.py`)
+`IdleSessionCoordinator` hooks into `user_aggregator` events:
+- After `USER_IDLE_PROMPT_SECONDS` of silence → plays one reminder prompt
+- After `SESSION_IDLE_CLOSE_SECONDS` total → emits `session_ended` event and calls `task.stop_when_done()`
+- Any user speech resets the coordinator
 
-### Configuration injection
-1. Frontend submits `SessionConfig` to `POST /session`.
-2. Backend validates with Pydantic, sanitizes the system prompt (strip control chars, length cap, no role-injection markers).
-3. `pipeline.factory.build_pipeline(config)` constructs services with config baked in — system prompt and temperature go through Pipecat `InputParams` on the LLM service, not appended to messages.
-4. The interruptibility percentage flows through `pipeline.vad.map_interruptibility(pct)` which returns concrete VAD parameters. Document the mapping formula in a docstring inside that function — this is graded.
+### Interruptibility mapping (`pipeline/vad.py`)
+`map_interruptibility(pct)` linearly interpolates `VADParams` over `[0, 100]`:
 
-### Interruptibility mapping
-Express it as a pure function with a clear, monotonic mapping. Example shape (verify exact Pipecat parameter names against the installed version before committing):
-- 0% → conservative: longer VAD stop window, higher confidence floor — bot rarely yields.
-- 100% → aggressive: short stop window, low confidence floor — bot yields on the slightest user speech.
-Use linear interpolation between two well-chosen endpoints and clamp inputs to `[0, 100]`. The docstring must state the formula and the parameter names it sets.
+| pct | confidence | start_secs | stop_secs | min_volume |
+|-----|-----------|------------|-----------|------------|
+| 0   | 0.85      | 0.30       | 0.80      | 0.60       |
+| 100 | 0.45      | 0.05       | 0.60      | 0.35       |
+
+(`stop_secs` uses a narrow band: 0.80→0.60, intentionally not aggressive.)
+
+### Help-center RAG
+- Qdrant `v1.14.1` runs as an internal-only Compose service (no host port). Collection: `freya_help_center`.
+- Seeded from `backend/app/data/help_center.json` on startup; subsequent boots log `help_center.seed_already_present`.
+- `HelpCenterRetriever` queries with `k=3`, clones the Pipecat `LLMContextFrame`, inserts retrieved text before the latest user message. Does NOT mutate shared conversation history.
+- Retrieval failures are fail-open (original context continues to LLM).
+- The synthetic greeting instruction is excluded from retrieval via `ignored_questions`.
+
+### Configuration fields (`SessionConfig`)
+| Field | Applied | Notes |
+|-------|---------|-------|
+| `system_prompt` | ✅ | `OpenAILLMService.Settings(system_instruction=...)` |
+| `temperature` | ✅ | OpenAI LLM |
+| `max_tokens` | ✅ | OpenAI LLM |
+| `tts_voice_id` | ✅ | Cartesia voice |
+| `tts_speed` | ✅ | `GenerationConfig(speed=...)` |
+| `stt_temperature` | ❌ | No param in Pipecat 1.0.0 `DeepgramSTTService`; logged as received |
+| `tts_temperature` | ❌ | No param in Pipecat 1.0.0 Cartesia; logged as received |
+| `interruptibility_pct` | ✅ | `map_interruptibility()` → `VADParams` |
+
+`system_prompt` empty → `resolve_system_prompt()` returns `DEFAULT_SYSTEM_PROMPT`, logs `system_prompt_used_default=True`. Empty is valid (falls back to default); >4000 chars is a 422 error.
 
 ---
 
 ## Code conventions
 
 ### Backend
-- **FastAPI + Pydantic v2** for the HTTP surface. Route handlers stay thin; all logic lives in `services/` or `pipeline/`.
-- **pydantic-settings** for config. No `os.getenv` outside `core/settings.py`. Settings are injected, not imported globally.
-- **Structured logging** via `structlog` with JSON output. Every log line carries `session_id` when one is in scope; use `structlog.contextvars` to bind it at session entry. No `print`.
-- **Async everywhere.** Pipecat is async; mixing sync I/O blocks the event loop. Use `httpx.AsyncClient` for the Daily REST API.
-- **Custom frame processors** subclass Pipecat's `FrameProcessor`. Keep each processor single-purpose; observability processors must `push_frame` everything they receive unchanged.
-- **Errors:** define domain exceptions in `core/errors.py` (`ConfigValidationError`, `UpstreamServiceError`, …) and map them to HTTP responses in one exception handler. Don't raise raw `HTTPException` from services.
-- **Retries** belong in `services/` (e.g., Daily room creation) using `tenacity` with bounded exponential backoff. Do not retry inside route handlers.
-- **Tests:** pytest + pytest-asyncio. Mock the Daily / OpenAI / Deepgram / Cartesia SDKs at the service boundary, not deeper. The latency, state-machine, and VAD-mapping tests must be deterministic — drive them with synthesized frame sequences and a fake clock, not real audio.
+- **pydantic-settings**: no `os.getenv` outside `core/settings.py`. Use `settings.require(name)` to fail fast with variable name in error.
+- **Structured logging**: `structlog` with JSON output. Bind `session_id` via `structlog.contextvars`. No `print`.
+- **Async everywhere**: `httpx.AsyncClient` for Daily REST, never blocking I/O on the event loop.
+- **Frame processors** subclass Pipecat's `FrameProcessor`. Observability processors must `push_frame` everything unchanged.
+- **Errors**: `core/errors.py` domain exceptions → one `exception_handler` in `main.py`. No raw `HTTPException` from services.
+- **Pipecat is pinned to `pipecat-ai==1.0.0`**. Verify parameter names against installed source before adding integrations.
+- `DailyOutputTransportMessageUrgentFrame` must be pushed **downstream** (not upstream) to broadcast over the data channel.
 
 ### Frontend
-- **App Router only.** No `pages/`. Server Components by default; mark interactive leaves `"use client"`.
-- **TanStack Query** owns server state (`/session` POST, `/health` checks). Component state is local `useState`/`useReducer`. No Redux/Zustand unless a concrete need emerges — document it if added.
-- **Daily.js lives behind `lib/daily.ts` and `hooks/useDailyCall.ts`.** Components never import `@daily-co/daily-js` directly.
-- **Forms with `react-hook-form` + `zod`.** The zod schema for `SessionConfig` is the single source of truth for client-side validation and must structurally match the backend Pydantic model.
-- **Env access via `lib/env.ts`** which validates `NEXT_PUBLIC_API_URL` at module load and throws with a clear message if missing. No bare `process.env` reads in components.
-- **No hardcoded URLs.** All API calls go through `lib/api.ts` which reads the base URL once.
-- **Strict TypeScript.** `strict: true`, `noUncheckedIndexedAccess: true`. Don't use `any`; prefer `unknown` + narrowing.
+- **App Router only**. Server Components by default; interactive leaves are `"use client"`.
+- **TanStack Query** for the `/session` POST. Component state is `useState`/`useReducer`.
+- **Daily.js** only via `lib/daily.ts` and `hooks/useDataChannel.ts`. Components never import `@daily-co/daily-js` directly.
+- **Env access** only via `lib/env.ts`. No bare `process.env` in components.
+- **TypeScript strict**: `strict: true`, `noUncheckedIndexedAccess: true`. No `any`.
+- Frontend tests use **Jest** (via `next/jest`), not Vitest.
+
+### Changing the data-channel contract
+Update all four in one commit: `app/schemas/events.py`, `frontend/types/contract.ts`, `data_channel_sender.py`, and `hooks/useDataChannel.ts`.
 
 ---
 
-## Critical constraints (rubric-graded; do not violate)
+## Deployment constraints
 
-1. **One `docker-compose.yml`.** The file that boots locally is the same file that boots on EC2. No `docker-compose.prod.yml`, no override files for the demo path.
-2. **Frontend runs production mode.** The compose service runs `next build` then `next start` (or uses a multi-stage Dockerfile that ships only the standalone build). Never `next dev` in compose.
-3. **`restart: unless-stopped`** on every service. The stack must come back after `sudo reboot`.
-4. **`NEXT_PUBLIC_API_URL` is configurable.** Frontend reads it at build time; never hardcode `http://localhost:8000`. Behind the Cloudflare tunnel it dies silently.
-5. **Mic requires HTTPS.** Test through the tunnel URL. `http://<EC2-IP>:3000` will fail to acquire the microphone and the bug is invisible in the JS console.
-6. **Secrets only on EC2.** `.env.example` lists every variable with empty values. Real `.env` is created on the box and never committed.
-7. **Clean-boot test passes:** `git clone … && cd … && cp .env.example .env && $EDITOR .env && docker compose up -d` brings the stack up with no other manual steps.
-8. **Cloudflare Tunnel is outbound** — only port 22 needs to be open inbound on the EC2 security group. Document this reasoning in DEPLOY.md rather than opening 80/443.
+1. **One `docker-compose.yml`** — same file for local and EC2. No override files.
+2. Frontend runs **production mode** (`next build` + `next start` via standalone output). Never `next dev` in Compose.
+3. **`restart: unless-stopped`** on every service.
+4. **`NEXT_PUBLIC_API_URL=/api`** default — baked at build time; rebuild frontend image after changing.
+5. Backend is internal-only (`expose`, not `ports`). Browser reaches it via the Next.js `/api` rewrite.
+6. **Mic requires HTTPS** — always test through the Cloudflare tunnel URL, not raw `http://<EC2-IP>:3000`.
+7. Clean-boot: `git clone && cp .env.example .env && $EDITOR .env && docker compose up -d` — no other steps.
 
 ---
 
 ## Required environment variables
 
-Define every variable in `.env.example` with an empty value and a comment. At minimum:
+See `.env.example`. Key vars:
 
 ```
-# OpenAI (LLM)
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
-
-# Deepgram (STT)
+OPENAI_API_KEY=          OPENAI_MODEL=gpt-4o-mini
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 DEEPGRAM_API_KEY=
-
-# Cartesia (TTS)
-CARTESIA_API_KEY=
-CARTESIA_DEFAULT_VOICE_ID=
-
-# Daily (WebRTC)
-DAILY_API_KEY=
-DAILY_DOMAIN=
-
-# Frontend
-NEXT_PUBLIC_API_URL=
+CARTESIA_API_KEY=        CARTESIA_DEFAULT_VOICE_ID=
+DAILY_API_KEY=           DAILY_DOMAIN=
+NEXT_PUBLIC_API_URL=     # Default /api works with docker-compose; override for separate tunnel
+QDRANT_URL=              # Default http://qdrant:6333
+USER_IDLE_PROMPT_SECONDS=60    SESSION_IDLE_CLOSE_SECONDS=300
 ```
 
-`core/settings.py` must fail fast on startup if a required variable is missing, with the variable name in the error.
+SESSION_IDLE_CLOSE_SECONDS must be > USER_IDLE_PROMPT_SECONDS (validated at startup).
 
 ---
 
-## Testing requirements
+## Test files
 
-These tests are explicitly graded — they must exist and pass:
+**Backend** (`uv run pytest`):
+- `test_health.py`, `test_session.py` — HTTP surface
+- `test_vad_mapping.py` — boundary (0/50/100%) + monotonicity
+- `test_config_injection.py` — SessionConfig → service params plumbing
+- `test_output_guard.py` — LLMOutputGuard rejection cases
+- `test_help_center.py` — Qdrant retrieval (mocked)
+- `test_state_transitions.py` — synthetic frame sequences → FSM assertions
+- `test_latency.py` — fake clock, ms between UserStopped → BotStarted
+- `test_interruption.py` — UserStarted while SPEAKING → one interruption + LISTENING
+- `test_idle_session.py` — IdleSessionCoordinator timing
 
-**Backend**
-- `test_config_injection.py` — verifies `SessionConfig` → `InputParams` plumbing for system prompt, temperature, max tokens, TTS voice/speed, STT temperature.
-- `test_vad_mapping.py` — boundary tests (0%, 50%, 100%) and monotonicity of `map_interruptibility`.
-- `test_state_transitions.py` — feeds synthetic frame sequences and asserts the FSM emits the right state changes.
-- `test_latency.py` — fake clock, asserts `latency` event ms equals the gap between `UserStoppedSpeakingFrame` and first `BotStartedSpeakingFrame`.
-- `test_interruption.py` — `UserStartedSpeakingFrame` while `SPEAKING` produces one `interruption` event and transitions to `LISTENING`.
-
-**Frontend**
-- Config form: required field validation, slider bounds, system-prompt textarea round-trip.
-- Dashboard: renders correct badge for each state, formats latency, shows interruption entries.
-- `useDataChannel` reducer: feeding event sequences yields the expected derived state.
-
----
-
-## When in doubt
-
-- **Match the architecture above before reaching for a different one.** If a real constraint forces a deviation, leave a short note in the affected file's docstring explaining why.
-- **Verify Pipecat API names against the installed version** before writing frame-processor or VAD code — Pipecat's API surface shifts between minor versions. Read the installed source, don't trust prior assumptions.
-- **The data-channel contract is the integration seam.** Changing it requires updating `app/schemas/events.py`, `types/contract.ts`, the sender processor, and the frontend hook in one commit.
+**Frontend** (`npm test`):
+- `tests/useDataChannel.test.ts` — reducer: state/latency/interruption/session_ended sequences
+- `tests/dashboard.test.tsx` — state badge, latency formatting, interruption list
+- `tests/config-form.test.tsx` — required fields, slider bounds, voice picker
+- `tests/session-inactivity.test.tsx` — inactivity notice display

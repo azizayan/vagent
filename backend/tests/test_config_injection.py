@@ -195,7 +195,11 @@ async def test_run_bot_injects_session_config(monkeypatch: pytest.MonkeyPatch) -
         max_tokens=88,
     )
     assert captured["tts_kwargs"]["settings"].voice == "voice-123"
-    assert captured["tts_kwargs"]["settings"].generation_config.values == {"speed": 1.2}
+    # tts_temperature=0.4 falls in the middle band → emotion=None (Cartesia default).
+    assert captured["tts_kwargs"]["settings"].generation_config.values == {
+        "speed": 1.2,
+        "emotion": None,
+    }
     assert captured["user_aggregator_params"]["user_idle_timeout"] == 60
     assert captured["context"].messages == [{"role": "user", "content": bot.GREETING_INSTRUCTION}]
     assert captured["retriever"] == (

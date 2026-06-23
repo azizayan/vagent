@@ -39,7 +39,8 @@ class StateTracker(FrameProcessor):
         UserStoppedSpeakingFrame  → THINKING  (start latency clock)
         BotStartedSpeakingFrame   → SPEAKING  (emit LatencyEvent only from THINKING)
         BotStoppedSpeakingFrame   → LISTENING
-        UserStartedSpeakingFrame  → LISTENING + InterruptionEvent [only from SPEAKING]
+        UserStartedSpeakingFrame  → LISTENING + InterruptionEvent
+                                    [from SPEAKING or THINKING; clears latency timer]
     """
 
     def __init__(
@@ -90,11 +91,15 @@ class StateTracker(FrameProcessor):
             logger.debug("state_tracker.listening")
 
         elif isinstance(frame, UserStartedSpeakingFrame):
-            if self._state == _BotState.SPEAKING:
+            if self._state in (_BotState.SPEAKING, _BotState.THINKING):
+                from_state = self._state
                 now = self._now_ms()
-                await self._emit(InterruptionEvent(at=now))
+                # Abandon the in-flight latency timer — Pipecat cancels the LLM
+                # call via broadcast_interruption() so no SPEAKING will follow.
+                self._latency_start = None
                 self._state = _BotState.LISTENING
+                await self._emit(InterruptionEvent(at=now))
                 await self._emit(StateEvent(state="LISTENING", at=now))
-                logger.debug("state_tracker.interruption")
+                logger.debug("state_tracker.interruption", from_state=from_state.name)
 
         await self.push_frame(frame, direction)
