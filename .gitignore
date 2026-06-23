@@ -1,0 +1,51 @@
+# Planning scratch (private)
+todo.md
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Python (backend/) ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# --- Node / Next.js (frontend/) ---
+node_modules/
+.next/
+out/
+next-env.d.ts
+.npm/
+.pnp.*
+.yarn/
+*.tsbuildinfo
+
+# Docker / Compose runtime
+*.local
+
+# Logs
+*.log
+logs/
+.playwright-mcp/

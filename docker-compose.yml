@@ -1,0 +1,74 @@
+# Single source of truth for both local dev and EC2 production.
+# DO NOT add a docker-compose.prod.yml. The clean-boot test from a fresh box is:
+#   git clone <repo> && cd <repo> && cp .env.example .env && $EDITOR .env && docker compose up -d
+
+name: freya
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: freya-backend:local
+    restart: unless-stopped
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      CARTESIA_API_KEY: ${CARTESIA_API_KEY:-}
+      CARTESIA_DEFAULT_VOICE_ID: ${CARTESIA_DEFAULT_VOICE_ID:-}
+      DAILY_API_KEY: ${DAILY_API_KEY:-}
+      DAILY_DOMAIN: ${DAILY_DOMAIN:-}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    expose:
+      - "8000"
+    # Backend is not published to the host by default — the frontend container
+    # reaches it on the internal docker network at http://backend:8000 via the
+    # Next.js /api rewrite. This keeps the EC2 attack surface to one port.
+    # Uncomment to debug locally:
+    # ports:
+    #   - "8000:8000"
+    networks:
+      - freya
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2).status==200 else 1)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked into the client bundle at `next build` time. Default `/api` keeps
+        # all browser traffic on the frontend origin (same-origin via Next.js
+        # rewrites). Override only if the backend is tunneled separately.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
+        NEXT_PUBLIC_DAILY_ROOM_URL: ${NEXT_PUBLIC_DAILY_ROOM_URL:-}
+    image: freya-frontend:local
+    restart: unless-stopped
+    environment:
+      # Rewrite target inside the docker network. Service name MUST match the
+      # backend service above.
+      BACKEND_INTERNAL_URL: http://backend:8000
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - freya
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+networks:
+  freya:
+    driver: bridge
