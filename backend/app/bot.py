@@ -22,7 +22,9 @@ from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.core.logging import get_logger
 from app.core.settings import Settings, get_settings
+from app.pipeline.processors.data_channel_sender import DataChannelSender
 from app.pipeline.processors.output_guard import LLMOutputGuard
+from app.pipeline.processors.state_tracker import StateTracker
 from app.pipeline.vad import map_interruptibility
 from app.schemas.config import SessionConfig
 
@@ -47,9 +49,25 @@ async def run_bot(
     session_id: str,
     settings: Settings | None = None,
 ) -> None:
+    import time
+
     settings = settings or get_settings()
     bind_contextvars(session_id=session_id)
-    logger.info("bot.starting", room_url=room_url)
+    logger.info(
+        "bot.starting",
+        room_url=room_url,
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
+        tts_voice=config.tts_voice_id,
+        tts_speed=config.tts_speed,
+        interruptibility_pct=config.interruptibility_pct,
+        # stt_temperature and tts_temperature are in the contract but have no
+        # corresponding parameter in DeepgramSTTService or CartesiaTTSService
+        # in Pipecat 1.0.0 — logged here to confirm receipt, not applied.
+        stt_temperature_received=config.stt_temperature,
+        tts_temperature_received=config.tts_temperature,
+    )
+    session_start = time.monotonic()
 
     transport = DailyTransport(
         room_url,
@@ -90,14 +108,19 @@ async def run_bot(
         ),
     )
 
+    sender = DataChannelSender()
+    tracker = StateTracker(session_start=session_start, on_event=sender.send_event)
+
     pipeline = Pipeline(
         [
             transport.input(),
+            tracker,
             stt,
             user_aggregator,
             llm,
             LLMOutputGuard(),
             tts,
+            sender,
             transport.output(),
             assistant_aggregator,
         ]

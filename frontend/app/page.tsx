@@ -1,9 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import type { DailyCall } from "@daily-co/daily-js";
+import { useMutation } from "@tanstack/react-query";
 
+import { useDataChannel } from "@/hooks/useDataChannel";
 import { api } from "@/lib/api";
 import { createDailyCall, destroyDailyCall } from "@/lib/daily";
 import type { SessionConfig, SessionResponse } from "@/types/contract";
@@ -20,146 +22,241 @@ const defaultConfig: SessionConfig = {
 };
 
 export default function HomePage() {
-  const callRef = useRef<DailyCall | null>(null);
+  const [call, setCall] = useState<DailyCall | null>(null);
   const [config, setConfig] = useState<SessionConfig>(defaultConfig);
   const [connected, setConnected] = useState(false);
-  const [connecting, setConnecting] = useState(false);
   const [sessionId, setSessionId] = useState("");
-  const [error, setError] = useState("");
+  const { botState, latencyMs, interruptions } = useDataChannel(call);
 
-  const toggleConnection = async (): Promise<void> => {
-    setError("");
-
-    try {
-      if (callRef.current) {
-        await destroyDailyCall(callRef.current);
-        callRef.current = null;
-        setConnected(false);
-        setSessionId("");
-        return;
+  const sessionMutation = useMutation({
+    mutationFn: (cfg: SessionConfig) => api.post<SessionResponse>("/session", cfg),
+    onSuccess: async (session) => {
+      const newCall = createDailyCall();
+      try {
+        await newCall.join({ url: session.roomUrl, token: session.token });
+        setCall(newCall);
+        setConnected(true);
+        setSessionId(session.sessionId);
+      } catch (err) {
+        await destroyDailyCall(newCall);
+        throw err;
       }
+    },
+  });
 
-      setConnecting(true);
-      const session = await api.post<SessionResponse>("/session", config);
-      const call = createDailyCall();
-      callRef.current = call;
-      await call.join({ url: session.roomUrl, token: session.token });
-      setConnected(true);
-      setSessionId(session.sessionId);
-    } catch (cause) {
-      if (callRef.current) {
-        await destroyDailyCall(callRef.current);
-        callRef.current = null;
-      }
-      setConnected(false);
-      setError(cause instanceof Error ? cause.message : "Unable to join the Daily room.");
-    } finally {
-      setConnecting(false);
+  const disconnect = async (): Promise<void> => {
+    sessionMutation.reset();
+    if (call) {
+      await destroyDailyCall(call);
+      setCall(null);
     }
+    setConnected(false);
+    setSessionId("");
   };
 
-  const setNumber = (field: keyof SessionConfig, value: string): void => {
-    setConfig((current) => ({ ...current, [field]: Number(value) }));
+  const setNum = (field: keyof SessionConfig, value: string): void => {
+    setConfig((c) => ({ ...c, [field]: Number(value) }));
   };
+
+  const busy = sessionMutation.isPending;
+  const error =
+    sessionMutation.error instanceof Error
+      ? sessionMutation.error.message
+      : sessionMutation.error
+        ? "Unable to join the Daily room."
+        : null;
 
   return (
-    <main>
-      <h1>Freya voice bot</h1>
-      <p>Configure a private voice session, then connect through Daily.</p>
+    <div className="app">
+      <header className="app-header">
+        <h1>Freya</h1>
+        <p>Interruptible voice agent</p>
+        {connected && (
+          <span className="status-badge" role="status">
+            Live{sessionId ? ` · ${sessionId.slice(0, 8)}` : ""}
+          </span>
+        )}
+      </header>
 
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void toggleConnection();
-        }}
-      >
-        <label>
-          System prompt
-          <textarea
-            required
-            maxLength={4000}
-            rows={5}
-            disabled={connected || connecting}
-            value={config.system_prompt}
-            onChange={(event) =>
-              setConfig((current) => ({ ...current, system_prompt: event.target.value }))
-            }
-          />
-        </label>
-
-        <div className="field-grid">
-          <label>
-            LLM temperature
-            <input
-              type="number"
-              min="0"
-              max="2"
-              step="0.1"
-              disabled={connected || connecting}
-              value={config.temperature}
-              onChange={(event) => setNumber("temperature", event.target.value)}
-            />
-          </label>
-          <label>
-            Max tokens
-            <input
-              type="number"
-              min="1"
-              max="4096"
-              disabled={connected || connecting}
-              value={config.max_tokens}
-              onChange={(event) => setNumber("max_tokens", event.target.value)}
-            />
-          </label>
-          <label>
-            Voice ID
-            <input
+      <div className="panels">
+        {/* ── LEFT: Config ── */}
+        <aside className="panel-config">
+          <div className="field">
+            <span className="field-label">System prompt</span>
+            <textarea
               required
-              disabled={connected || connecting}
-              value={config.tts_voice_id}
-              onChange={(event) =>
-                setConfig((current) => ({ ...current, tts_voice_id: event.target.value }))
+              maxLength={4000}
+              rows={5}
+              disabled={connected || busy}
+              value={config.system_prompt}
+              onChange={(e) =>
+                setConfig((c) => ({ ...c, system_prompt: e.target.value }))
               }
             />
-          </label>
-          <label>
-            Voice speed
+          </div>
+
+          <div className="field-grid-2">
+            <div className="field">
+              <span className="field-label">LLM temperature</span>
+              <input
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                disabled={connected || busy}
+                value={config.temperature}
+                onChange={(e) => setNum("temperature", e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <span className="field-label">Max tokens</span>
+              <input
+                type="number"
+                min="1"
+                max="4096"
+                disabled={connected || busy}
+                value={config.max_tokens}
+                onChange={(e) => setNum("max_tokens", e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <span className="field-label">STT temperature</span>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.1"
+                disabled={connected || busy}
+                value={config.stt_temperature}
+                onChange={(e) => setNum("stt_temperature", e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <span className="field-label">TTS temperature</span>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.1"
+                disabled={connected || busy}
+                value={config.tts_temperature}
+                onChange={(e) => setNum("tts_temperature", e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <span className="field-label">Voice ID</span>
+              <input
+                required
+                disabled={connected || busy}
+                value={config.tts_voice_id}
+                onChange={(e) =>
+                  setConfig((c) => ({ ...c, tts_voice_id: e.target.value }))
+                }
+              />
+            </div>
+            <div className="field">
+              <span className="field-label">Voice speed</span>
+              <input
+                type="number"
+                min="0.6"
+                max="1.5"
+                step="0.1"
+                disabled={connected || busy}
+                value={config.tts_speed}
+                onChange={(e) => setNum("tts_speed", e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="field">
+            <span className="field-label">
+              Interruptibility: {config.interruptibility_pct}%
+            </span>
             <input
-              type="number"
-              min="0.6"
-              max="1.5"
-              step="0.1"
-              disabled={connected || connecting}
-              value={config.tts_speed}
-              onChange={(event) => setNumber("tts_speed", event.target.value)}
+              type="range"
+              min="0"
+              max="100"
+              disabled={connected || busy}
+              value={config.interruptibility_pct}
+              onChange={(e) => setNum("interruptibility_pct", e.target.value)}
             />
-          </label>
-        </div>
+          </div>
 
-        <label>
-          Interruptibility: {config.interruptibility_pct}%
-          <input
-            type="range"
-            min="0"
-            max="100"
-            disabled={connected || connecting}
-            value={config.interruptibility_pct}
-            onChange={(event) => setNumber("interruptibility_pct", event.target.value)}
-          />
-        </label>
+          {error && (
+            <p className="error-msg" role="alert">
+              {error}
+            </p>
+          )}
 
-        <button type="submit" disabled={connecting}>
-          {connecting ? "Connecting…" : connected ? "Disconnect" : "Start session"}
-        </button>
-      </form>
+          {!connected && (
+            <button
+              className="btn-primary"
+              disabled={busy}
+              onClick={() => sessionMutation.mutate(config)}
+            >
+              {busy ? "Connecting…" : "Start session"}
+            </button>
+          )}
+        </aside>
 
-      {connected ? (
-        <p role="status">
-          Connected
-          {sessionId ? ` · Session ${sessionId.slice(0, 8)}` : ""}
-        </p>
-      ) : null}
-      {error ? <p role="alert">{error}</p> : null}
-    </main>
+        {/* ── RIGHT: Session ── */}
+        <main className="panel-session">
+          {!connected ? (
+            <p className="session-idle">
+              Configure the agent on the left, then start a session.
+            </p>
+          ) : (
+            <>
+              <div
+                className="state-pill"
+                data-state={botState ?? "idle"}
+                aria-live="polite"
+                aria-label={`Bot state: ${botState ?? "idle"}`}
+              >
+                {botState ?? "—"}
+              </div>
+
+              <div className="metric-block">
+                <p className="metric-label">Round-trip latency</p>
+                <p className="metric-value">
+                  {latencyMs !== null ? (
+                    <>
+                      {Math.round(latencyMs)}
+                      <span>ms</span>
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </p>
+                <p className="metric-hint">user silence → first bot audio</p>
+              </div>
+
+              {interruptions.length > 0 && (
+                <div className="interruption-block">
+                  <div className="interruption-header">
+                    <span>Interruptions</span>
+                    <span>{interruptions.length}</span>
+                  </div>
+                  <ol className="interruption-list">
+                    {interruptions.map((ev) => (
+                      <li key={ev.at} className="interruption-item">
+                        {Math.round(ev.at)} ms into session
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
+              <button
+                className="btn-disconnect"
+                onClick={() => void disconnect()}
+              >
+                Disconnect
+              </button>
+            </>
+          )}
+        </main>
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,9 @@
 # Planning scratch (private)
 todo.md
+AGENTS.md
+CLAUDE.md
+HANDOFF.md
+
 
 # Environment / secrets
 .env
